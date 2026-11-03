@@ -37,6 +37,7 @@ function useSimLoop() {
           if (now - lastPaint > 90) { s.bump(); lastPaint = now; }
         }
       } else acc = 0;
+      if (world.current.destroy.length) s.removeIds(world.current.destroy.splice(0));
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

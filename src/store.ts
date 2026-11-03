@@ -40,6 +40,7 @@ interface State {
   onConnect: (c: Connection) => void;
   addNode: (def: string, pos: { x: number; y: number }, params?: Record<string, unknown>) => string;
   removeSelected: () => void;
+  removeIds: (ids: string[]) => void;
   duplicateSelected: () => void;
   setParam: (id: string, key: string, value: unknown) => void;
   setEdge: (id: string, patch: Partial<CableData>) => void;
@@ -177,6 +178,14 @@ export const useStore = create<State>((set, get) => {
       get().checkpoint();
       for (const id of ids) delete world.current.nodes[id];
       set({ nodes: nodes.filter((n) => !ids.has(n.id)), edges: edges.filter((e) => !eids.has(e.id)) });
+      resettle();
+    },
+    removeIds: (ids) => {
+      const set_ = new Set(ids.filter((id) => world.current.nodes[id]));
+      if (!set_.size) return;
+      get().checkpoint();
+      for (const id of set_) delete world.current.nodes[id];
+      set((s) => ({ nodes: s.nodes.filter((n) => !set_.has(n.id)), edges: s.edges.filter((e) => !set_.has(e.source) && !set_.has(e.target)) }));
       resettle();
     },
     duplicateSelected: () => {

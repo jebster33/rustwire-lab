@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { DEF, BATTERY, WATER_CAP, portsOf, type PortDef } from '../sim/defs';
+import { DEF, BATTERY, WATER_CAP, EXPLOSIVES, portsOf, type PortDef } from '../sim/defs';
+import { armExplosive } from '../sim/engine';
 import { world, type WNode } from '../sim/world';
 import { useStore, useTick, type DepNode as DepNodeT } from '../store';
 import { ItemIcon } from './icons';
@@ -141,6 +142,12 @@ function readout(n: WNode): React.ReactNode {
     case 'waterpump': return n.on ? <b>Pumping</b> : <>Needs 5 rW</>;
     case 'conveyor': return n.on ? (S.moved ? <b>Moving items</b> : <>Running</>) : <>Off</>;
     case 'player': return null;
+    case 'seismic': return (S.t ?? 0) > 0 ? <b>Vibration!</b> : <>Still</>;
+    case 'explosive': {
+      const e = EXPLOSIVES[String(n.params.type)];
+      if (S.fuse != null) return <b>Fuse lit, {Math.ceil(S.fuse)}s</b>;
+      return <>{e?.name ?? 'Explosive'}</>;
+    }
     default:
       if (d.draw != null) return n.on ? <b>On</b> : <>Needs {d.draw} rW</>;
       return null;
@@ -161,6 +168,7 @@ function DepNodeView({ id, data }: NodeProps<DepNodeT>) {
 
   const press = () => {
     if (def.press === 'toggle') setParam(id, 'on', !n.params.on);
+    if (n.def === 'explosive') { armExplosive(n); poke(); return; }
     if (def.press === 'press') { n.st.t = Number(n.params.duration) || 5; poke(); }
   };
   const hold = (v: boolean) => { n.st.held = v; poke(); };
@@ -169,7 +177,7 @@ function DepNodeView({ id, data }: NodeProps<DepNodeT>) {
     <div className={`dep c-${def.cat} ${n.on ? 'is-on' : ''}`}>
       <div className="dep-head">
         <div className="dep-icon">
-          <ItemIcon s={def.icon} size={40} />
+          <ItemIcon s={n.def === 'explosive' ? String(n.params.type) : def.icon} size={40} key={n.def === 'explosive' ? String(n.params.type) : def.icon} />
           {(def.draw != null || def.cat === 'power') && <span className="lamp" />}
         </div>
         <div>
@@ -181,13 +189,15 @@ function DepNodeView({ id, data }: NodeProps<DepNodeT>) {
       {def.press && (
         <button
           className="dep-press nodrag"
-          aria-pressed={def.press === 'toggle' ? !!n.params.on : !!(n.st.t > 0 || n.st.held)}
+          aria-pressed={def.press === 'toggle' ? !!n.params.on : !!(n.st.t > 0 || n.st.held || n.st.fuse != null)}
           onClick={def.press !== 'hold' ? press : undefined}
           onPointerDown={def.press === 'hold' ? () => hold(true) : undefined}
           onPointerUp={def.press === 'hold' ? () => hold(false) : undefined}
           onPointerLeave={def.press === 'hold' ? () => n.st.held && hold(false) : undefined}
         >
-          {def.press === 'toggle' ? (n.params.on ? 'Turn off' : 'Turn on') : def.press === 'press' ? 'Press' : 'Hold to transmit'}
+          {n.def === 'explosive'
+            ? n.st.fuse != null ? 'Fuse lit' : EXPLOSIVES[String(n.params.type)]?.fuse ? 'Light fuse' : 'Fire'
+            : def.press === 'toggle' ? (n.params.on ? 'Turn off' : 'Turn on') : def.press === 'press' ? 'Press' : 'Hold to transmit'}
         </button>
       )}
       {ports.length > 0 && (

@@ -1,4 +1,4 @@
-import { DEF, BATTERY, WATER_CAP, WB_TIER } from './defs';
+import { DEF, BATTERY, WATER_CAP, WB_TIER, EXPLOSIVES } from './defs';
 import { ITEMS, stackSize } from '../data/items';
 import {
   type World, type WNode, type Slot, addItem, spaceFor, takeItem, countItem, notify,
@@ -149,6 +149,7 @@ function computePower(c: Ctx, n: WNode): Record<string, number> {
       if (n.def === 'pressurepad' && hit && i('in') === 0) { o.out = 1; n.on = true; break; }
       o.out = hit ? pass() : 0; n.on = hit && i('in') > 0; break;
     }
+    case 'seismic': o.out = (S.t ?? 0) > 0 ? pass() : 0; n.on = o.out > 0; break;
     case 'storagemonitor': o.out = i('in') >= 2 && (S.t ?? 0) > 0 ? 1 : 0; n.on = i('in') >= 1; break;
     case 'turret': case 'sam': {
       const need = d.draw ?? 0;
@@ -308,6 +309,15 @@ function updateTimed(c: Ctx, dt: number) {
         });
         break;
       }
+      case 'seismic':
+        if (S.t > 0) S.t = Math.max(0, S.t - dt);
+        break;
+      case 'explosive':
+        if (S.fuse != null) {
+          S.fuse -= dt;
+          if (S.fuse <= 0) { S.fuse = null; detonate(c, n); }
+        }
+        break;
       case 'pressurepad':
         S.hit = c.players.some((p) => rectDist(r, c.rects[p.id]) <= 0.15);
         break;
@@ -392,6 +402,44 @@ function updateTimed(c: Ctx, dt: number) {
       S.load = load;
     }
   }
+}
+
+let blastId = 1;
+export function armExplosive(n: WNode) {
+  const e = EXPLOSIVES[String(n.params.type)] ?? EXPLOSIVES['explosive.timed'];
+  n.st.fuse = e.fuse;
+  n.st.armedAt = Date.now();
+}
+function detonate(c: Ctx, n: WNode) {
+  const w = c.w;
+  const e = EXPLOSIVES[String(n.params.type)] ?? EXPLOSIVES['explosive.timed'];
+  const r = c.rects[n.id];
+  if (!r) return;
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  if (n.params.duds && e.dud > 0 && Math.random() < e.dud) {
+    w.blasts.push({ id: blastId++, x: cx, y: cy, r: e.radius * PX_PER_M, at: Date.now(), kind: n.params.type, dud: true });
+    notify(w, `${e.name} was a dud. Press Detonate to relight it.`, 'warn');
+    return;
+  }
+  w.blasts.push({ id: blastId++, x: cx, y: cy, r: e.radius * PX_PER_M, at: Date.now(), kind: n.params.type });
+  if (w.blasts.length > 8) w.blasts.shift();
+  let felt = 0;
+  for (const m of Object.values(w.nodes)) {
+    if (m.id === n.id) continue;
+    const d = rectDist(r, c.rects[m.id]);
+    if (m.def === 'seismic') {
+      const range = Number(m.params.range);
+      // vibration falls off with distance; stronger charges reach further
+      const intensity = e.strength * (1 - d / (range * (0.6 + 0.4 * e.strength)));
+      if (intensity > 0.02) { m.st.t = Math.max(m.st.t ?? 0, Number(m.params.hold) * (0.5 + intensity)); felt++; }
+    }
+    if (d <= e.radius) {
+      if (m.def === 'player') notify(w, `${m.params.name} was caught in the blast`, 'alarm');
+      else if (n.params.destroy && m.def !== 'explosive') w.destroy.push(m.id);
+    }
+  }
+  const killed = w.destroy.length;
+  notify(w, `${e.name} exploded${felt ? `, ${felt} seismic sensor${felt > 1 ? 's' : ''} tripped` : ''}${killed ? `, ${killed} deployable${killed > 1 ? 's' : ''} destroyed` : ''}`, 'alarm');
 }
 
 // ───────── water

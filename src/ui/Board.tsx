@@ -36,6 +36,16 @@ function ConnLine({ fromX, fromY, toX, toY, fromNode, fromHandle }: ConnectionLi
 
 function Overlays() {
   useTick();
+  const last = world.current.blasts[world.current.blasts.length - 1];
+  const lastId = last && !last.dud ? last.id : 0;
+  useEffect(() => {
+    if (!lastId || Date.now() - (last?.at ?? 0) > 500) return;
+    const el = document.querySelector('.board');
+    el?.classList.add('shaking');
+    const t = setTimeout(() => el?.classList.remove('shaking'), 750);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastId]);
   const nodes = useStore((s) => s.nodes);
   const rings: React.ReactNode[] = [];
   for (const rn of nodes) {
@@ -64,6 +74,30 @@ function Overlays() {
     );
   }
   return <ViewportPortal>{rings}</ViewportPortal>;
+}
+
+/** Explosions drawn above the parts, in screen space. */
+function BlastLayer() {
+  useTick();
+  const { flowToScreenPosition, getZoom } = useReactFlow();
+  const host = document.querySelector('.board')?.getBoundingClientRect();
+  const now = Date.now();
+  const live = world.current.blasts.filter((b) => now - b.at < 1600);
+  if (!live.length || !host) return null;
+  const z = getZoom();
+  return (
+    <div className="blast-layer">
+      {live.map((b) => {
+        const p = flowToScreenPosition({ x: b.x, y: b.y });
+        const r = Math.max(b.r, 70) * z * 1.15;
+        return (
+          <div key={b.id} className={`blast ${b.dud ? 'dud' : ''}`} style={{ left: p.x - host.left - r, top: p.y - host.top - r, width: r * 2, height: r * 2 }}>
+            <i /><b />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function Board() {
@@ -139,6 +173,7 @@ export default function Board() {
         <Controls showInteractive={false} position="bottom-left" />
         <MiniMap pannable zoomable nodeColor={minimapColor} maskColor="rgba(20,17,14,.6)" className="hide-sm" />
       </ReactFlow>
+      <BlastLayer />
       {nodes.length === 0 && <EmptyHint />}
     </div>
   );

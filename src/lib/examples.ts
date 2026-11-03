@@ -160,6 +160,32 @@ export const EXAMPLES: { id: string; title: string; blurb: string; icons: string
     ),
   },
   {
+    id: 'raid-alarm',
+    title: 'Seismic raid alarm',
+    blurb: 'A seismic sensor trips a siren, an audio alarm and a smart alarm when something explodes nearby. Light the C4 and watch it go.',
+    icons: ['electric.seismicsensor', 'explosive.timed', 'electric.sirenlight'],
+    doc: () => build(
+      [
+        { id: 'bat', def: 'battery_l', x: 0, y: 60, params: { charge: 24000 }, st: { charge: 24000 } },
+        { id: 'seis', def: 'seismic', x: 300, y: 48, params: { range: 20, hold: 5 } },
+        { id: 'spl', def: 'splitter', x: 600, y: 36 },
+        { id: 'siren', def: 'siren', x: 900, y: -120 },
+        { id: 'alarm', def: 'audioalarm', x: 900, y: 60 },
+        { id: 'sa', def: 'smartalarm', x: 900, y: 220, params: { msg: 'Seismic sensor: you are being raided!' } },
+        { id: 'box', def: 'box_l', x: 300, y: 252, items: [['sulfur', 5000], ['explosive.timed', 4], ['metal.refined', 400]] },
+        { id: 'c4', def: 'explosive', x: 330, y: 420, params: { type: 'explosive.timed', destroy: true } },
+        { id: 'raider', def: 'player', x: 620, y: 470, params: { name: 'Raider', authed: false } },
+      ],
+      [
+        ['bat', 'out', 'seis', 'in', 'power', 'red'],
+        ['seis', 'out', 'spl', 'in', 'power', 'red'],
+        ['spl', 'o1', 'siren', 'in', 'power', 'yellow'],
+        ['spl', 'o2', 'alarm', 'in', 'power', 'yellow'],
+        ['spl', 'o3', 'sa', 'in', 'power', 'yellow'],
+      ],
+    ),
+  },
+  {
     id: 'logic',
     title: 'Memory cell door latch',
     blurb: 'Two buttons set and reset a memory cell that drives a door controller, with a counter tracking presses through a timer.',

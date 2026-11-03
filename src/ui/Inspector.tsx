@@ -22,6 +22,15 @@ function ParamField({ n, p }: { n: WNode; p: ParamDef }) {
         {p.label}{tag}
       </label>
     );
+  if (p.type === 'select')
+    return (
+      <div className="field">
+        <label htmlFor={`${n.id}-${p.key}`}>{p.label}{tag}</label>
+        <select id={`${n.id}-${p.key}`} className="select" value={String(v)} onChange={(e) => setParam(n.id, p.key, e.target.value)}>
+          {(p.options ?? []).map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
+        </select>
+      </div>
+    );
   if (p.type === 'text')
     return (
       <div className="field">

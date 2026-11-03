@@ -35,10 +35,14 @@ export interface World {
   pipeItem: Record<string, string>; // edge id → last item moved
   pipeAt: Record<string, number>; // edge id → sim time of last move
   notices: Notice[];
+  blasts: Blast[]; // recent explosions (for drawing)
+  destroy: string[]; // node ids blown up, removed by the app
 }
 
+export type Blast = { id: number; x: number; y: number; r: number; at: number; kind: string; dud?: boolean };
+
 export function newWorld(): World {
-  return { nodes: {}, time: 0, tod: 9, wind: 0.5, rain: false, lockTime: false, flow: {}, pipeItem: {}, pipeAt: {}, notices: [] };
+  return { nodes: {}, time: 0, tod: 9, wind: 0.5, rain: false, lockTime: false, flow: {}, pipeItem: {}, pipeAt: {}, notices: [], blasts: [], destroy: [] };
 }
 
 export const world: { current: World } = { current: newWorld() };

@@ -72,6 +72,16 @@ const planter = (id: string, name: string, icon: string, slots: number): Def => 
   params: [ADAPTOR_PARAM, { key: 'plants', label: 'Plant slots', type: 'int', default: slots, min: slots, max: slots }],
 });
 
+export const EXPLOSIVES: Record<string, { name: string; fuse: number; radius: number; strength: number; dud: number }> = {
+  'explosive.timed': { name: 'Timed Explosive Charge (C4)', fuse: 10, radius: 4, strength: 1, dud: 0 },
+  'explosive.satchel': { name: 'Satchel Charge', fuse: 8, radius: 3.5, strength: 0.55, dud: 0.2 },
+  'ammo.rocket.basic': { name: 'Rocket', fuse: 0, radius: 3, strength: 0.7, dud: 0 },
+  'ammo.rocket.hv': { name: 'High Velocity Rocket', fuse: 0, radius: 1.5, strength: 0.45, dud: 0 },
+  'ammo.grenadelauncher.he': { name: '40mm HE Grenade', fuse: 0, radius: 3.5, strength: 0.4, dud: 0 },
+  'grenade.beancan': { name: 'Beancan Grenade', fuse: 4, radius: 4.5, strength: 0.3, dud: 0.15 },
+  'grenade.f1': { name: 'F1 Grenade', fuse: 3, radius: 5, strength: 0.25, dud: 0 },
+};
+
 export const DEFS: Def[] = [
   // ───────────── Power
   {
@@ -254,6 +264,16 @@ export const DEFS: Def[] = [
     info: 'Passes power while a player stands on it. Without input it gives a 1 rW pulse.',
     ports: [PIN, POUT],
     radius: () => 1,
+  },
+  {
+    id: 'seismic', name: 'Seismic Sensor', icon: 'electric.seismicsensor', cat: 'sensors', draw: 1,
+    info: 'Passes power through while it feels vibration from an explosion within range. Set off an explosive nearby to trip it.',
+    ports: [PIN, POUT],
+    params: [
+      { key: 'range', label: 'Range (m)', type: 'float', default: 10, min: 1, max: 30 },
+      { key: 'hold', label: 'Hold after vibration (s)', type: 'float', default: 3, min: 0.25, max: 30, simOnly: true },
+    ],
+    radius: (p) => Number(p.range ?? 10),
   },
   {
     id: 'storagemonitor', name: 'Storage Monitor', icon: 'storage.monitor', cat: 'sensors', draw: 1,
@@ -476,6 +496,20 @@ export const DEFS: Def[] = [
       { key: 'name', label: 'Name', type: 'text', default: 'Survivor' },
       { key: 'authed', label: 'Authorized on turrets / TC', type: 'bool', default: true },
     ],
+  },
+  {
+    id: 'explosive', name: 'Explosive', icon: 'explosive.timed', cat: 'sim', press: 'press',
+    info: 'Pick an explosive and set it off. Seismic sensors in range react, and it can destroy deployables in its blast.',
+    ports: [],
+    params: [
+      {
+        key: 'type', label: 'Explosive', type: 'select', default: 'explosive.timed',
+        options: Object.entries(EXPLOSIVES).map(([value, e]) => ({ value, label: e.name })),
+      },
+      { key: 'destroy', label: 'Destroy deployables in the blast', type: 'bool', default: false, simOnly: true },
+      { key: 'duds', label: 'Allow duds (satchels and beancans)', type: 'bool', default: true },
+    ],
+    radius: (p) => EXPLOSIVES[String(p.type)]?.radius ?? 4,
   },
   {
     id: 'godbox', name: 'God Box', icon: 'sim.godbox', cat: 'sim', slots: 48, adaptor: true,
