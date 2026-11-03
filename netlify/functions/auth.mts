@@ -1,6 +1,6 @@
 import type { Config, Context } from '@netlify/functions';
 import { getStore } from '@netlify/blobs';
-import { sign, readSession, setSession, clearSession, json } from '../lib/session.mts';
+import { sign, readSession, setSession, clearSession, json, isAdmin } from '../lib/session.mts';
 
 const STEAM = 'https://steamcommunity.com/openid/login';
 
@@ -21,7 +21,8 @@ export default async (req: Request, context: Context) => {
   const path = url.pathname;
 
   if (path === '/api/me') {
-    return json({ user: await readSession(context) });
+    const user = await readSession(context);
+    return json({ user, admin: isAdmin(user?.sid) });
   }
   if (path === '/api/auth/logout') {
     clearSession(context);

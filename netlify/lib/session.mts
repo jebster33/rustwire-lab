@@ -49,3 +49,11 @@ export function randomId(len = 10) {
   return [...bytes].map((b) => abc[b % abc.length]).join('');
 }
 export const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'cache-control': 'no-store' } });
+
+/** Steam IDs with admin rights. Checked server-side against the signed session only. */
+const DEFAULT_ADMINS = ['76561199605311033'];
+export function isAdmin(sid?: string | null) {
+  if (!sid) return false;
+  const extra = (Netlify.env.get('ADMIN_STEAMIDS') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return [...DEFAULT_ADMINS, ...extra].includes(sid);
+}

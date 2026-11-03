@@ -3,6 +3,7 @@ import raw from './items.json';
 export type Recipe = { y: number; wb: number; t: number; i: [string, number][] };
 export type ItemInfo = {
   n: string;
+  id?: number;
   g: string;
   d: string;
   c?: Recipe;
@@ -18,6 +19,7 @@ export const itemName = (s: string) => ITEMS[s]?.n ?? s;
 const ICON_OVERRIDE: Record<string, string> = {
   'sim.godbox': 'box.wooden.large',
   'sim.voidbox': 'box.wooden',
+  'sim.pile': 'box.wooden',
 };
 export const iconUrl = (s: string) =>
   `https://wiki.rustclash.com/img/items180/${ICON_OVERRIDE[s] ?? s}.png`;

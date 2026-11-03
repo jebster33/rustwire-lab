@@ -2,7 +2,7 @@ import type { SaveDoc } from '../store';
 import { makeNode, newWorld, snapshotWorld, addItem, type World } from '../sim/world';
 import type { PortKind } from '../sim/defs';
 
-type N = { id: string; def: string; x: number; y: number; params?: Record<string, any>; st?: Record<string, any>; items?: [string, number, string?][] };
+type N = { id: string; def: string; x: number; y: number; parent?: string; params?: Record<string, any>; st?: Record<string, any>; items?: [string, number, string?][] };
 type E = [string, string, string, string, PortKind, string?];
 
 function build(nodes: N[], edges: E[], tweak?: (w: World) => void): SaveDoc {
@@ -10,13 +10,14 @@ function build(nodes: N[], edges: E[], tweak?: (w: World) => void): SaveDoc {
   for (const n of nodes) {
     const m = makeNode(n.id, n.def, n.params);
     Object.assign(m.st, n.st ?? {});
+    if (n.parent) m.st.host = n.parent;
     for (const [s, q, g] of n.items ?? []) addItem(m.inv, s, q, g);
     w.nodes[n.id] = m;
   }
   tweak?.(w);
   return {
     v: 1,
-    nodes: nodes.map((n) => ({ id: n.id, def: n.def, x: n.x, y: n.y })),
+    nodes: nodes.map((n) => ({ id: n.id, def: n.def, x: n.x, y: n.y, ...(n.parent ? { parent: n.parent } : {}) })),
     edges: edges.map(([s, sp, t, tp, kind, color], i) => ({ id: `e${i}`, s, sh: `o:${sp}`, t, th: `i:${tp}`, kind, color: color ?? 'default', points: [] })),
     world: snapshotWorld(w),
   };
@@ -61,7 +62,7 @@ export const EXAMPLES: { id: string; title: string; blurb: string; icons: string
       [
         { id: 'gen', def: 'testgen', x: 0, y: 120 },
         { id: 'br', def: 'branch', x: 300, y: 0, params: { amount: 11 } },
-        { id: 'tur', def: 'turret', x: 600, y: -120, items: [['ammo.rifle', 128], ['ammo.rifle', 128], ['ammo.rifle', 128]] },
+        { id: 'tur', def: 'turret', x: 600, y: -120, items: [['rifle.ak', 1], ['ammo.rifle', 128], ['ammo.rifle', 128], ['ammo.rifle', 128]] },
         { id: 'hb', def: 'hbhf', x: 600, y: 180, params: { others: true, authed: false } },
         { id: 'alarm', def: 'audioalarm', x: 900, y: 180 },
         { id: 'laser', def: 'laser', x: 300, y: 360, params: { angle: 0, length: 14 } },
@@ -89,10 +90,10 @@ export const EXAMPLES: { id: string; title: string; blurb: string; icons: string
         { id: 'gen', def: 'testgen', x: -320, y: 300 },
         { id: 'god', def: 'godbox', x: 0, y: 0, st: { entries: [{ s: 'sulfur', mode: 'infinite', n: 1000 }, { s: 'charcoal', mode: 'infinite', n: 1000 }] } },
         { id: 'cv1', def: 'conveyor', x: 300, y: 120 },
-        { id: 'wb', def: 'wb1', x: 650, y: -12 },
-        { id: 'cr', def: 'crafter', x: 650, y: 72, st: { templates: ['gunpowder', null, null, null, null, null] } },
-        { id: 'cv2', def: 'conveyor', x: 1000, y: 120 },
-        { id: 'box', def: 'box_l', x: 1300, y: 60 },
+        { id: 'wb', def: 'wb1', x: 648, y: 24 },
+        { id: 'cr', def: 'crafter', x: 240, y: 0, parent: 'wb', st: { templates: ['gunpowder', null, null, null, null, null] } },
+        { id: 'cv2', def: 'conveyor', x: 1200, y: 120 },
+        { id: 'box', def: 'box_l', x: 1488, y: 72 },
       ],
       [
         ['god', 'iout', 'cv1', 'iin', 'item', 'yellow'],
@@ -167,7 +168,7 @@ export const EXAMPLES: { id: string; title: string; blurb: string; icons: string
     doc: () => build(
       [
         { id: 'bat', def: 'battery_l', x: 0, y: 60, params: { charge: 24000 }, st: { charge: 24000 } },
-        { id: 'seis', def: 'seismic', x: 300, y: 48, params: { range: 20, hold: 5 } },
+        { id: 'seis', def: 'seismic', x: 312, y: 48, params: { range: 20 } },
         { id: 'spl', def: 'splitter', x: 600, y: 36 },
         { id: 'siren', def: 'siren', x: 900, y: -120 },
         { id: 'alarm', def: 'audioalarm', x: 900, y: 60 },
@@ -194,7 +195,7 @@ export const EXAMPLES: { id: string; title: string; blurb: string; icons: string
       [
         { id: 'bat', def: 'battery_m', x: 0, y: 120, params: { charge: 9000 }, st: { charge: 9000 } },
         { id: 'spl', def: 'splitter', x: 300, y: 100 },
-        { id: 'b1', def: 'button', x: 600, y: -100, params: { duration: 1 } },
+        { id: 'b1', def: 'button', x: 600, y: -96, params: { duration: 1 } },
         { id: 'b2', def: 'button', x: 600, y: 140, params: { duration: 1 } },
         { id: 'mc', def: 'memorycell', x: 950, y: 0 },
         { id: 'dc', def: 'doorcontroller', x: 1300, y: -60 },
@@ -213,5 +214,62 @@ export const EXAMPLES: { id: string; title: string; blurb: string; icons: string
         ['dc', 'out', 'cnt', 'in', 'power', 'yellow'],
       ],
     ),
+  },
+];
+
+const turretGrid = () => {
+  const nodes: N[] = [{ id: 'bat', def: 'battery_l', x: 0, y: 312, params: { charge: 24000 }, st: { charge: 24000 } }];
+  const edges: E[] = [];
+  let prev = 'bat', port = 'out';
+  for (let i = 0; i < 9; i++) {
+    const br = `br${i}`, t = `t${i}`;
+    nodes.push({ id: br, def: 'branch', x: 264 + i * 264, y: 312, params: { amount: 11 } });
+    nodes.push({ id: t, def: 'turret', x: 264 + i * 264, y: 0, items: [['rifle.ak', 1], ['ammo.rifle', 128], ['ammo.rifle', 128]] });
+    edges.push([prev, port, br, 'in', 'power', 'red'], [br, 'branch', t, 'in', 'power', 'red']);
+    prev = br; port = 'out';
+  }
+  return build(nodes, edges);
+};
+
+export const MODULES: { id: string; title: string; blurb: string; icons: string[]; doc: () => SaveDoc }[] = [
+  { id: 'turrets9', title: '9 turret line', blurb: 'A large battery feeding nine AK turrets through branches set to 11 rW each.', icons: ['autoturret', 'electrical.branch', 'electric.battery.rechargable.large'], doc: turretGrid },
+  {
+    id: 'solar6', title: 'Solar bank (6 panels)', blurb: 'Six large solar panels joined by root combiners into one 120 rW line.', icons: ['electric.solarpanel.large', 'electrical.combiner'],
+    doc: () => build(
+      [0, 1, 2, 3, 4, 5].map((i) => ({ id: `s${i}`, def: 'solar', x: 0, y: i * 168 })).concat([
+        { id: 'r1', def: 'rootcombiner', x: 288, y: 48 }, { id: 'r2', def: 'rootcombiner', x: 288, y: 384 }, { id: 'r3', def: 'rootcombiner', x: 288, y: 720 },
+        { id: 'r4', def: 'rootcombiner', x: 576, y: 216 }, { id: 'r5', def: 'rootcombiner', x: 864, y: 456 },
+      ] as N[]),
+      [
+        ['s0', 'out', 'r1', 'a', 'power', 'yellow'], ['s1', 'out', 'r1', 'b', 'power', 'yellow'], ['s2', 'out', 'r2', 'a', 'power', 'yellow'], ['s3', 'out', 'r2', 'b', 'power', 'yellow'],
+        ['s4', 'out', 'r3', 'a', 'power', 'yellow'], ['s5', 'out', 'r3', 'b', 'power', 'yellow'], ['r1', 'out', 'r4', 'a', 'power', 'yellow'], ['r2', 'out', 'r4', 'b', 'power', 'yellow'],
+        ['r4', 'out', 'r5', 'a', 'power', 'yellow'], ['r3', 'out', 'r5', 'b', 'power', 'yellow'],
+      ],
+    ),
+  },
+  {
+    id: 'battery-switch', title: 'Battery with on/off switch', blurb: 'A medium battery behind a switch, so it charges and only discharges when you flip it.', icons: ['electric.battery.rechargable.medium', 'electric.switch'],
+    doc: () => build([{ id: 'b', def: 'battery_m', x: 0, y: 0 }, { id: 'sw', def: 'switch', x: 288, y: 0 }], [['b', 'out', 'sw', 'in', 'power', 'red']]),
+  },
+  {
+    id: 'hbhf-light', title: 'HBHF motion light', blurb: 'An HBHF sensor that turns on ceiling lights when someone walks in.', icons: ['electric.hbhfsensor', 'ceilinglight'],
+    doc: () => build(
+      [{ id: 'h', def: 'hbhf', x: 0, y: 0, params: { authed: true } }, { id: 'l1', def: 'ceilinglight', x: 288, y: -72 }, { id: 'l2', def: 'ceilinglight', x: 288, y: 120 }, { id: 'sp', def: 'splitter', x: 0, y: 216 }],
+      [['h', 'out', 'sp', 'in', 'power', 'yellow'], ['sp', 'o1', 'l1', 'in', 'power', 'yellow'], ['sp', 'o2', 'l2', 'in', 'power', 'yellow']],
+    ),
+  },
+  {
+    id: 'sorter', title: 'Industrial sorter', blurb: 'A conveyor pulls from a box and a splitter spreads items over three boxes.', icons: ['industrial.conveyor', 'industrial.splitter', 'box.wooden.large'],
+    doc: () => build(
+      [
+        { id: 'in', def: 'box_l', x: 0, y: 0 }, { id: 'cv', def: 'conveyor', x: 288, y: 0 }, { id: 'sp', def: 'isplitter', x: 576, y: 24 },
+        { id: 'a', def: 'box_l', x: 864, y: -168 }, { id: 'b', def: 'box_l', x: 864, y: 24 }, { id: 'c', def: 'box_l', x: 864, y: 216 },
+      ],
+      [['in', 'iout', 'cv', 'iin', 'item'], ['cv', 'iout', 'sp', 'iin', 'item'], ['sp', 'o1', 'a', 'iin', 'item'], ['sp', 'o2', 'b', 'iin', 'item'], ['sp', 'o3', 'c', 'iin', 'item']],
+    ),
+  },
+  {
+    id: 'workbench-crafters', title: 'Workbench 3 with two crafters', blurb: 'A level 3 workbench with both industrial crafter slots attached.', icons: ['workbench3', 'industrial.crafter'],
+    doc: () => build([{ id: 'wb', def: 'wb3', x: 0, y: 0 }, { id: 'c1', def: 'crafter', x: 240, y: 0, parent: 'wb' }, { id: 'c2', def: 'crafter', x: -240, y: 0, parent: 'wb' }], []),
   },
 ];

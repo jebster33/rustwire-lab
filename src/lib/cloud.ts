@@ -3,7 +3,8 @@ import { world } from '../sim/world';
 import { DEF } from '../sim/defs';
 
 export type User = { sid: string; name: string; avatar: string };
-export type Meta = { id: string; title: string; visibility: 'public' | 'private'; author: string; updated: number; icons: string[]; count: number };
+export type Meta = { id: string; title: string; visibility: 'public' | 'private'; author: string; updated: number; icons: string[]; count: number; owner?: string };
+export type Profile = { sid: string; name: string; avatar: string };
 
 const KEYS = 'rw.editKeys';
 const LOCAL = 'rw.saves';
@@ -50,7 +51,7 @@ export const previewIcons = () => {
 };
 
 export const cloud = {
-  me: () => api<{ user: User | null }>('/api/me').then((r) => r.user).catch(() => null),
+  me: () => api<{ user: User | null; admin: boolean }>('/api/me').catch(() => ({ user: null, admin: false })),
   logout: () => api('/api/auth/logout', { method: 'POST' }).catch(() => null),
   loginUrl: () => `/api/auth/steam?back=${encodeURIComponent(location.pathname + location.search)}`,
   create: (body: { title: string; visibility: string; author?: string; doc: SaveDoc }) =>
@@ -62,7 +63,11 @@ export const cloud = {
       headers: editKeyFor(id) ? { 'x-edit-key': editKeyFor(id) } : {},
     }),
   get: (id: string) =>
-    api<Meta & { doc: SaveDoc; canEdit: boolean; mine: boolean }>(`/api/saves/${id}`, { headers: editKeyFor(id) ? { 'x-edit-key': editKeyFor(id) } : {} }),
+    api<Meta & { doc: SaveDoc; canEdit: boolean; mine: boolean; canDelete: boolean }>(`/api/saves/${id}`, { headers: editKeyFor(id) ? { 'x-edit-key': editKeyFor(id) } : {} }),
+  patch: (id: string, body: { title?: string; visibility?: string }) =>
+    api<{ id: string; meta: Meta }>(`/api/saves/${id}`, { method: 'PATCH', body: JSON.stringify(body), headers: editKeyFor(id) ? { 'x-edit-key': editKeyFor(id) } : {} }),
+  profile: (sid: string) => api<{ profile: Profile; items: Meta[]; self: boolean }>(`/api/profile/${sid}`),
+  adminList: (q = '') => api<{ items: Meta[] }>(`/api/admin/saves?q=${encodeURIComponent(q)}`).then((r) => r.items),
   remove: (id: string) => api(`/api/saves/${id}`, { method: 'DELETE', headers: editKeyFor(id) ? { 'x-edit-key': editKeyFor(id) } : {} }),
   gallery: (q = '') => api<{ items: Meta[] }>(`/api/gallery?q=${encodeURIComponent(q)}`).then((r) => r.items),
   mine: () => api<{ items: Meta[] }>('/api/mine').then((r) => r.items),

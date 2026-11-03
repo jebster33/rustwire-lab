@@ -13,6 +13,10 @@ export default function SimPanel() {
   const wireColor = useStore((s) => s.wireColor);
   const setWireColor = useStore((s) => s.setWireColor);
   const setDialog = useStore((s) => s.setDialog);
+  const showCost = useStore((s) => s.showCost);
+  const setShowCost = useStore((s) => s.setShowCost);
+  const straight = useStore((s) => s.straight);
+  const setStraight = useStore((s) => s.setStraight);
   const w = world.current;
   let gen = 0, used = 0, stored = 0;
   for (const n of Object.values(w.nodes)) {
@@ -35,9 +39,16 @@ export default function SimPanel() {
           <input id="wind" type="range" min={0} max={1} step={0.01} value={w.wind} onChange={(e) => { w.wind = Number(e.target.value); poke(); }} />
         </div>
         <label className="check"><input type="checkbox" checked={w.rain} onChange={(e) => { w.rain = e.target.checked; poke(); }} />Raining (water catchers fill faster)</label>
+        <label className="check"><input type="checkbox" checked={w.bugs} onChange={(e) => { w.bugs = e.target.checked; poke(); }} />Simulate known Rust electricity bugs</label>
       </div>
       <div className="section">
         <h3>Board</h3>
+        <label className="check"><input type="checkbox" checked={showCost} onChange={(e) => setShowCost(e.target.checked)} />Show build cost on the board</label>
+        <label className="check"><input type="checkbox" checked={straight} onChange={(e) => setStraight(e.target.checked)} />Straight cables with sharp corners</label>
+        <div className="btnrow"><button className="btn" onClick={() => setDialog('bg')}>Background image…</button></div>
+      </div>
+      <div className="section">
+        <h3>Stats</h3>
         <dl className="stats">
           <dt>Deployables</dt><dd>{nodes.length}</dd>
           <dt>Generated</dt><dd>{gen} rW</dd>
@@ -57,10 +68,11 @@ export default function SimPanel() {
       <div className="section">
         <h3>Controls</h3>
         <ul className="tips">
-          <li>Drag from an output dot to an input dot to wire. One cable per port, like in-game.</li>
-          <li>Double-click a cable to add a bend; select it to recolour.</li>
+          <li>Drag from an output dot to an input dot to wire, or use the wire tool (W) to click corners. One cable per port, like in-game.</li>
+          <li>Drag a cable end off its port to move or unplug it. Double-click a cable to add a bend.</li>
+          <li>Click a part’s name on the board to rename it.</li>
           <li>Drag a player near sensors, turrets and workbenches.</li>
-          <li><span className="kbd">Del</span> removes, <span className="kbd">Ctrl</span>+<span className="kbd">Z</span> undoes, <span className="kbd">Ctrl</span>+<span className="kbd">D</span> duplicates, <span className="kbd">Space</span> pauses.</li>
+          <li><span className="kbd">Ctrl</span>+<span className="kbd">C</span>/<span className="kbd">V</span> copy and paste, <span className="kbd">Ctrl</span>+<span className="kbd">Z</span> undo, <span className="kbd">Del</span> removes, <span className="kbd">Space</span> pauses.</li>
         </ul>
         <div className="btnrow" style={{ marginTop: 10 }}>
           <button className="btn" onClick={() => setDialog('calc')}>Recipe calculator</button>

@@ -1,7 +1,7 @@
 import { DEF, BATTERY, WATER_CAP, WB_TIER, EXPLOSIVES } from './defs';
 import { ITEMS, stackSize } from '../data/items';
 import {
-  type World, type WNode, type Slot, addItem, spaceFor, takeItem, countItem, notify,
+  type World, type WNode, addItem, spaceFor, takeItem, countItem, notify,
 } from './world';
 import { STAGES, stageOf, stageStart, crossbreed, neighboursOf, geneCount, PLANT, harvestYield } from './plants';
 
@@ -20,6 +20,12 @@ type Ctx = {
   rects: Record<string, Rect>;
   players: WNode[];
   rf: Set<number>;
+  /** "node:port" power inputs the game ignores (non-root into a root combiner, loops, battery self-charge) */
+  blocked: Set<string>;
+  /** nodes that short-circuit (Max Depth, memory cell loop) */
+  shorted: Set<string>;
+  warn: Map<string, string>;
+  bugs: boolean;
 };
 
 const k = (n: string, p: string) => `${n}:${p}`;
@@ -34,7 +40,68 @@ export function buildCtx(w: World, g: Graph): Ctx {
     outs.set(k(e.source, hk(e.sourceHandle)), { node: e.target, port: hk(e.targetHandle), edge: e.id });
   }
   const players = Object.values(w.nodes).filter((n) => n.def === 'player');
-  return { w, ins, outs, rects: g.rects, players, rf: new Set() };
+  const c: Ctx = { w, ins, outs, rects: g.rects, players, rf: new Set(), blocked: new Set(), shorted: new Set(), warn: new Map(), bugs: w.bugs !== false };
+  analysePower(c);
+  return c;
+}
+
+const isPowerPort = (defId: string, key: string) => DEF[defId]?.ports.some((p) => p.key === key && p.kind === 'power');
+const SOURCES = new Set(['solar', 'wind', 'fuelgen', 'testgen', 'battery_s', 'battery_m', 'battery_l', 'pressurepad', 'reactive']);
+
+/** Static wiring rules that Rust enforces silently. */
+function analysePower(c: Ctx) {
+  const nodes = c.w.nodes;
+  const succ = new Map<string, string[]>();
+  for (const [key, l] of c.outs) {
+    const src = key.slice(0, key.lastIndexOf(':'));
+    const port = key.slice(key.lastIndexOf(':') + 1);
+    if (!nodes[src] || !isPowerPort(nodes[src].def, port)) continue;
+    if (!succ.has(src)) succ.set(src, []);
+    succ.get(src)!.push(l.node);
+  }
+  // shortest number of hops from a to b along power wires
+  const hops = (a: string, b: string, limit = 64) => {
+    const seen = new Set([a]);
+    let frontier = [a];
+    for (let d = 1; d <= limit && frontier.length; d++) {
+      const next: string[] = [];
+      for (const x of frontier) for (const y of succ.get(x) ?? []) {
+        if (y === b) return d;
+        if (!seen.has(y)) { seen.add(y); next.push(y); }
+      }
+      frontier = next;
+    }
+    return Infinity;
+  };
+  // components between the nearest power source and each node
+  const depth = new Map<string, number>();
+  let frontier = Object.values(nodes).filter((n) => SOURCES.has(n.def)).map((n) => n.id);
+  for (const id of frontier) depth.set(id, 0);
+  for (let d = 1; frontier.length && d < 200; d++) {
+    const next: string[] = [];
+    for (const x of frontier) for (const y of succ.get(x) ?? []) if (!depth.has(y)) { depth.set(y, d); next.push(y); }
+    frontier = next;
+  }
+  for (const n of Object.values(nodes)) {
+    if (n.def === 'rootcombiner') {
+      for (const port of ['a', 'b']) {
+        const l = c.ins.get(k(n.id, port));
+        if (!l) continue;
+        const src = nodes[l.node];
+        if (!DEF[src.def].root) { c.blocked.add(k(n.id, port)); c.warn.set(n.id, `${DEF[src.def].name} isn’t root power, so the combiner ignores it`); continue; }
+        if (hops(n.id, src.id) < Infinity) { c.blocked.add(k(n.id, port)); c.warn.set(n.id, 'Loops back into itself, so that input is ignored'); continue; }
+        if ((depth.get(src.id) ?? 0) + 1 > 16) { c.shorted.add(n.id); c.warn.set(n.id, 'Short Circuit / Max Depth: more than 16 components from the power source'); }
+      }
+    }
+    if (n.def in BATTERY) {
+      const l = c.ins.get(k(n.id, 'in'));
+      if (l && (l.node === n.id || hops(n.id, l.node) < Infinity)) { c.blocked.add(k(n.id, 'in')); c.warn.set(n.id, 'Can’t charge from its own output'); }
+    }
+    if (n.def === 'memorycell') {
+      const loop = hops(n.id, n.id);
+      if (loop < 8) { c.shorted.add(n.id); c.warn.set(n.id, `Short circuit: loops into itself through ${loop} component${loop > 1 ? 's' : ''} (needs at least 8)`); }
+    }
+  }
 }
 
 // ───────── geometry (metres)
@@ -67,12 +134,13 @@ const isDay = (w: World) => sunFactor(w.tod) > 0.15;
 
 // ───────── power
 const powerIn = (c: Ctx, n: WNode, port: string) => {
+  if (c.blocked.has(k(n.id, port))) return 0;
   const l = c.ins.get(k(n.id, port));
   return l ? c.w.nodes[l.node]?.pout[l.port] ?? 0 : 0;
 };
 const connectedOut = (c: Ctx, n: WNode, port: string) => c.outs.has(k(n.id, port));
 
-const TRIGGERS = ['set', 'reset', 'toggle', 'on', 'off', 'trig', 'inc', 'dec', 'clear', 'start', 'stop', 'block', 'pump'];
+const TRIGGERS = ['set', 'reset', 'toggle', 'on', 'off', 'trig', 'inc', 'dec', 'clear', 'start', 'stop', 'block', 'pump', 'lower'];
 
 function computePower(c: Ctx, n: WNode): Record<string, number> {
   const d = DEF[n.def];
@@ -88,8 +156,13 @@ function computePower(c: Ctx, n: WNode): Record<string, number> {
       o.out = v; n.on = v > 0; break;
     }
     case 'wind': {
-      const hf = Math.min(1, 0.3 + Number(P.height) * 0.1);
-      const v = P.wind ? Math.round(150 * c.w.wind * hf) : Number(P.amount);
+      // gusts drift over time; height above terrain gives stronger, steadier wind
+      const t = c.w.time;
+      const gust = 0.82 + 0.12 * Math.sin(t / 41) + 0.06 * Math.sin(t / 13.7 + 1.3);
+      const h = Number(P.height);
+      const hf = 0.3 + 0.7 * Math.min(1, h / 45) + Math.max(0, h - 45) / 500;
+      const steady = Math.min(1, h / 60);
+      const v = P.wind ? Math.round(150 * Math.min(1, c.w.wind * (gust * (1 - steady) + 0.95 * steady) * hf)) : Number(P.amount);
       o.out = v; n.on = v > 0; break;
     }
     case 'fuelgen': {
@@ -106,6 +179,10 @@ function computePower(c: Ctx, n: WNode): Record<string, number> {
       o.out = can ? b.out : 0; n.on = can; break;
     }
     case 'rootcombiner': o.out = i('a') + i('b'); n.on = o.out > 0; break;
+    case 'reactive': {
+      const down = !!S.down;
+      o.out = down ? (i('in') > 0 ? pass() : (S.t ?? 0) > 0 ? 1 : 0) : 0; n.on = down; break;
+    }
     case 'branch': {
       const avail = pass();
       o.branch = Math.min(Number(P.amount), avail);
@@ -113,18 +190,24 @@ function computePower(c: Ctx, n: WNode): Record<string, number> {
       n.on = i('in') > 0; break;
     }
     case 'splitter': {
+      // split between used outputs; remainder goes to Output 1, then 2 (16 → 6/5/5)
       const ports = ['o1', 'o2', 'o3'].filter((p) => connectedOut(c, n, p));
-      const each = ports.length ? Math.floor(pass() / ports.length) : 0;
-      for (const p of ['o1', 'o2', 'o3']) o[p] = ports.includes(p) ? each : 0;
+      const total = pass();
+      const each = ports.length ? Math.floor(total / ports.length) : 0;
+      let rem = ports.length ? total - each * ports.length : 0;
+      for (const p of ['o1', 'o2', 'o3']) {
+        o[p] = ports.includes(p) ? each + (rem > 0 ? 1 : 0) : 0;
+        if (ports.includes(p) && rem > 0) rem--;
+      }
       n.on = i('in') > 0; break;
     }
     case 'blocker': o.out = i('block') > 0 ? 0 : pass(); n.on = o.out > 0; break;
     case 'memorycell': o.out = S.bit ? pass() : 0; o.inv = S.bit ? 0 : pass(); n.on = !!S.bit; break;
     case 'and': o.out = i('a') > 0 && i('b') > 0 ? Math.max(i('a'), i('b')) : 0; n.on = o.out > 0; break;
-    case 'or': o.out = Math.max(0, Math.max(i('a'), i('b')) - 1); n.on = o.out > 0; break;
+    case 'or': o.out = Math.max(i('a'), i('b')); n.on = o.out > 0; break;
     case 'xor': {
       const a = i('a') > 0, b = i('b') > 0;
-      o.out = a !== b ? Math.max(0, Math.max(i('a'), i('b')) - 1) : 0; n.on = o.out > 0; break;
+      o.out = a !== b ? Math.max(i('a'), i('b')) : 0; n.on = o.out > 0; break;
     }
     case 'switch': case 'smartswitch': o.out = P.on ? pass() : 0; n.on = !!P.on; break;
     case 'button': o.out = (S.t ?? 0) > 0 ? (i('in') > 0 ? pass() : 2) : 0; n.on = (S.t ?? 0) > 0; break;
@@ -142,26 +225,29 @@ function computePower(c: Ctx, n: WNode): Record<string, number> {
     case 'clock': o.out = (S.t ?? 0) > 0 ? pass() : 0; n.on = i('in') > 0; break;
     case 'hbhf': {
       const cnt = S.detected ?? 0;
-      o.out = i('in') >= 2 ? Math.min(pass(), cnt) : 0; n.on = o.out > 0; break;
+      o.out = i('in') >= 1 ? Math.min(pass(), cnt) : 0; n.on = i('in') >= 1; break;
     }
-    case 'laser': case 'pressurepad': {
-      const hit = !!S.hit;
-      if (n.def === 'pressurepad' && hit && i('in') === 0) { o.out = 1; n.on = true; break; }
-      o.out = hit ? pass() : 0; n.on = hit && i('in') > 0; break;
-    }
-    case 'seismic': o.out = (S.t ?? 0) > 0 ? pass() : 0; n.on = o.out > 0; break;
+    case 'laser': o.out = S.hit ? pass() : 0; n.on = !!S.hit && i('in') > 0; break;
+    case 'pressurepad': o.out = S.hit ? Math.max(1, i('in')) : 0; n.on = !!S.hit; break;
+    case 'seismic': o.out = (S.t ?? 0) > 0 ? Math.min(pass(), S.level ?? 1) : 0; n.on = o.out > 0; break;
     case 'storagemonitor': o.out = i('in') >= 2 && (S.t ?? 0) > 0 ? 1 : 0; n.on = i('in') >= 1; break;
     case 'turret': case 'sam': {
       const need = d.draw ?? 0;
-      const ammo = n.inv.reduce((a, s) => a + (s && s.s.startsWith('ammo.') ? s.n : 0), 0);
+      const gun = n.def === 'turret' ? turretGun(n) : null;
+      const ammo = n.def === 'sam'
+        ? countItem(n.inv, 'ammo.rocket.sam')
+        : gun ? n.inv.reduce((a, s) => a + (s && gun.ammo(s.s) ? s.n : 0), 0) : 0;
       n.on = i('in') >= need;
       const aux = i('in') >= need + 1;
-      const target = n.on && !!S.target && ammo > 0;
+      const armed = n.def === 'sam' || !!gun;
+      const target = n.on && armed && !!S.target && ammo > 0;
+      const mag = n.def === 'sam' ? 6 : gun?.mag ?? 30;
       o.target = aux && target ? 1 : 0;
-      o.low = aux && ammo > 0 && ammo < (n.def === 'sam' ? 6 : 40) ? 1 : 0;
-      o.none = aux && ammo === 0 ? 1 : 0;
-      o.out = Math.max(0, i('in') - need);
+      o.low = aux && armed && ammo > 0 && ammo < mag ? 1 : 0;
+      o.none = aux && armed && ammo === 0 ? 1 : 0;
+      if (n.def === 'sam') o.out = Math.max(0, i('in') - need);
       S.ammo = ammo;
+      S.gun = gun?.s ?? null;
       break;
     }
     case 'fluidswitch': n.on = !!P.on; break;
@@ -179,6 +265,22 @@ function computePower(c: Ctx, n: WNode): Record<string, number> {
   return o;
 }
 
+export const GUN_MAG: [RegExp, number, string][] = [
+  [/^lmg\.m249$/, 100, 'ammo.rifle'], [/^rifle\.(ak|lr300)/, 30, 'ammo.rifle'], [/^rifle\.semiauto/, 16, 'ammo.rifle'],
+  [/^rifle\.m39/, 20, 'ammo.rifle'], [/^rifle\.(bolt|l96)/, 4, 'ammo.rifle'], [/^smg\.mp5/, 30, 'ammo.pistol'], [/^smg\.thompson/, 20, 'ammo.pistol'],
+  [/^smg\./, 24, 'ammo.pistol'], [/^pistol\.m92/, 15, 'ammo.pistol'], [/^pistol\./, 10, 'ammo.pistol'],
+  [/^shotgun\.spas12/, 6, 'ammo.shotgun'], [/^shotgun\.pump/, 6, 'ammo.shotgun'], [/^shotgun\./, 2, 'ammo.shotgun'],
+];
+export function turretGun(n: WNode) {
+  const sl = n.inv.find((s) => s && ITEMS[s.s]?.g === 'weapons');
+  if (!sl) return null;
+  const m = GUN_MAG.find(([re]) => re.test(sl.s));
+  if (!m) return null;
+  const fam = m[2];
+  const ammo = (s: string) => fam === 'ammo.shotgun' ? s.startsWith('ammo.shotgun') || s === 'ammo.handmade.shell' : s.startsWith(fam);
+  return { s: sl.s, mag: m[1], ammo };
+}
+
 function solvePower(c: Ctx) {
   const nodes = Object.values(c.w.nodes);
   for (let iter = 0; iter < 40; iter++) {
@@ -189,12 +291,17 @@ function solvePower(c: Ctx) {
       for (const p of d.ports) if (p.dir === 'in' && p.kind === 'power') n.pin[p.key] = powerIn(c, n, p.key);
     }
     for (const n of nodes) {
-      const o = computePower(c, n);
+      const o = c.shorted.has(n.id) ? Object.fromEntries(DEF[n.def].ports.filter((p) => p.dir === 'out' && p.kind === 'power').map((p) => [p.key, 0])) : computePower(c, n);
       for (const [key, v] of Object.entries(o)) {
         if (n.pout[key] !== v) { n.pout[key] = v; changed = true; }
       }
     }
     if (!changed && iter > 0) break;
+  }
+  for (const n of nodes) {
+    const w = c.warn.get(n.id);
+    if (w) n.st.warn = w; else if (n.st.warn) delete n.st.warn;
+    if (c.shorted.has(n.id)) n.on = false;
   }
 }
 
@@ -207,7 +314,16 @@ function processTriggers(c: Ctx): boolean {
       if (!(t in n.pin)) continue;
       const now = (n.pin[t] ?? 0) > 0;
       const was = !!prev[t];
+      const val = n.pin[t] ?? 0;
+      const lastVal = prev[`${t}#v`] ?? 0;
       prev[t] = now;
+      prev[`${t}#v`] = val;
+      // Known Rust bug: constant power on a memory cell's Toggle flips it on every circuit update
+      if (c.bugs && n.def === 'memorycell' && t === 'toggle' && now && was && val !== lastVal) {
+        n.st.bit = !n.st.bit;
+        changed = true;
+        continue;
+      }
       if (!now || was) continue;
       const P = n.params, S = n.st;
       switch (n.def) {
@@ -235,6 +351,10 @@ function processTriggers(c: Ctx): boolean {
           if (t === 'stop') P.on = false;
           changed = true; break;
         case 'fluidswitch': if (t === 'toggle') { P.on = !P.on; changed = true; } break;
+        case 'reactive':
+          if (t === 'lower') { S.down = true; S.t = 1; }
+          if (t === 'reset') S.down = false;
+          changed = true; break;
         case 'efurnace': case 'conveyor': case 'crafter':
           if (t === 'on') P.on = true;
           if (t === 'off') P.on = false;
@@ -309,7 +429,7 @@ function updateTimed(c: Ctx, dt: number) {
         });
         break;
       }
-      case 'seismic':
+      case 'seismic': case 'reactive':
         if (S.t > 0) S.t = Math.max(0, S.t - dt);
         break;
       case 'explosive':
@@ -322,12 +442,13 @@ function updateTimed(c: Ctx, dt: number) {
         S.hit = c.players.some((p) => rectDist(r, c.rects[p.id]) <= 0.15);
         break;
       case 'turret': {
-        S.target = c.players.some((p) => !p.params.authed && rectDist(r, c.rects[p.id]) <= Number(P.range));
+        S.target = c.players.some((p) => !p.params.authed && (!P.peace || p.params.hostile) && rectDist(r, c.rects[p.id]) <= Number(P.range));
         if (S.target && n.on && (S.ammo ?? 0) > 0) {
           S.shot = (S.shot ?? 0) + dt * 2;
           while (S.shot >= 1) {
             S.shot -= 1;
-            const slot = n.inv.find((s) => s && s.s.startsWith('ammo.'));
+            const gun = turretGun(n);
+            const slot = gun ? n.inv.find((s) => s && gun.ammo(s.s)) : null;
             if (slot) takeItem(n.inv, slot.s, 1);
           }
         }
@@ -338,12 +459,7 @@ function updateTimed(c: Ctx, dt: number) {
         break;
       case 'storagemonitor': {
         if (S.t > 0) S.t = Math.max(0, S.t - dt);
-        let best: WNode | undefined, bd = 3.01;
-        for (const m of Object.values(w.nodes)) {
-          if (m.id === n.id || !DEF[m.def].adaptor || m.def === 'player') continue;
-          const dd = rectDist(r, c.rects[m.id]);
-          if (dd < bd) { bd = dd; best = m; }
-        }
+        const best: WNode | undefined = S.host ? w.nodes[S.host] : undefined;
         S.target = best?.id ?? null;
         const h = best ? JSON.stringify(best.inv) : '';
         if (S.hash !== undefined && h !== S.hash) S.t = 1;
@@ -431,11 +547,21 @@ function detonate(c: Ctx, n: WNode) {
       const range = Number(m.params.range);
       // vibration falls off with distance; stronger charges reach further
       const intensity = e.strength * (1 - d / (range * (0.6 + 0.4 * e.strength)));
-      if (intensity > 0.02) { m.st.t = Math.max(m.st.t ?? 0, Number(m.params.hold) * (0.5 + intensity)); felt++; }
+      if (intensity > 0.02) {
+        const lvl = e.strength >= 0.9 ? 3 : e.strength >= 0.45 ? 2 : 1;
+        m.st.level = (m.st.t ?? 0) > 0 ? Math.max(lvl, m.st.level ?? 0) : lvl;
+        m.st.t = 3;
+        felt++;
+      }
     }
     if (d <= e.radius) {
       if (m.def === 'player') notify(w, `${m.params.name} was caught in the blast`, 'alarm');
-      else if (n.params.destroy && m.def !== 'explosive') w.destroy.push(m.id);
+      else if (n.params.destroy && m.def !== 'explosive') {
+        w.destroy.push(m.id);
+        const loot = m.inv.filter(Boolean);
+        const mr = c.rects[m.id];
+        if (loot.length && m.def !== 'pile' && mr) w.spawn.push({ def: 'pile', x: mr.x + 12, y: mr.y + 12, inv: loot.slice(0, 12) });
+      }
     }
   }
   const killed = w.destroy.length;
@@ -556,9 +682,13 @@ export function accepts(n: WNode, s: string): boolean {
     case 'efurnace': return SMELTABLE.has(s);
     case 'refinery': return s === 'wood' || s === 'crude.oil';
     case 'fuelgen': return s === 'lowgradefuel';
-    case 'turret': return s.startsWith('ammo.') && !s.includes('rocket') && !s.includes('grenade');
+    case 'turret': return (s.startsWith('ammo.') && !s.includes('rocket') && !s.includes('grenade') && !s.includes('nailgun') && !s.includes('arrow')) || GUN_MAG.some(([re]) => re.test(s));
     case 'sam': return s === 'ammo.rocket.sam';
     case 'godbox': return false;
+    case 'pile': return true;
+    case 'tc': return ['wood', 'stones', 'metal.fragments', 'metal.refined'].includes(s) || ['building.planner', 'hammer', 'wiretool', 'hosetool', 'pipetool', 'toolgun'].includes(s);
+    case 'fridge': return ITEMS[s]?.g === 'food' || s === 'water' || s.startsWith('bottle') || s.startsWith('smallwaterbottle') || s === 'waterjug';
+    case 'locker': return ['attire', 'weapons', 'tools', 'ammo', 'medical'].includes(ITEMS[s]?.g ?? '');
     case 'crafter': {
       const t: (string | null)[] = n.st.templates ?? [];
       return t.some((x) => x && ITEMS[x]?.c?.i.some(([ing]) => ing === s));
@@ -777,12 +907,9 @@ function crafter(c: Ctx, dt: number) {
   for (const n of Object.values(w.nodes)) {
     if (n.def !== 'crafter') continue;
     const S = n.st;
-    // tier from the nearest workbench within 3 m
-    let tier = 0;
-    for (const m of Object.values(w.nodes)) {
-      const t = WB_TIER[m.def];
-      if (t && rectDist(c.rects[n.id], c.rects[m.id]) <= 3) tier = Math.max(tier, t);
-    }
+    // tier comes from the workbench it is attached to
+    const host = S.host ? w.nodes[S.host] : undefined;
+    const tier = host ? WB_TIER[host.def] ?? 0 : 0;
     S.tier = tier;
     if (!n.on || !tier) continue;
     const templates: string[] = (S.templates ?? []).filter(Boolean);
@@ -809,6 +936,26 @@ function crafter(c: Ctx, dt: number) {
       for (const [s, q] of rec.i) takeItem(n.inv, s, q, 0, 12);
       S.cur = it; S.prog = 0; S.next = idx + 1;
       break;
+    }
+  }
+}
+
+function hoppers(c: Ctx) {
+  const w = c.w;
+  for (const n of Object.values(w.nodes)) {
+    if (n.def !== 'hopper' || !n.on || !n.st.host) continue;
+    const host = w.nodes[n.st.host];
+    if (!host) continue;
+    for (const pile of Object.values(w.nodes)) {
+      if (pile.def !== 'pile' || rectDist(c.rects[host.id], c.rects[pile.id]) > 3) continue;
+      let moved = false;
+      for (let i = 0; i < pile.inv.length; i++) {
+        const sl = pile.inv[i];
+        if (!sl) continue;
+        const got = insertItem(host, sl.s, sl.n, sl.g);
+        if (got > 0) { moved = true; sl.n -= got; if (sl.n <= 0) pile.inv[i] = null; }
+      }
+      if (moved && !pile.inv.some(Boolean)) w.destroy.push(pile.id);
     }
   }
 }
@@ -887,26 +1034,25 @@ export function step(w: World, g: Graph, dt = STEP, ctx?: Ctx) {
   processors(c, dt);
   industrial(c, dt);
   crafter(c, dt);
+  hoppers(c);
   farming(c, dt);
   playerCrafting(c, dt);
   return c;
 }
 
 function playerCrafting(c: Ctx, dt: number) {
-  for (const p of c.players) {
-    const q: { s: string; n: number; t: number; left: number; per: number }[] = p.st.queue ?? [];
-    if (!q.length) continue;
-    const job = q[0];
-    job.left -= dt;
-    while (job.left <= 0 && job.n > 0) {
-      addItem(p.inv, job.s, job.per);
-      job.n -= job.per;
-      job.left += Math.max(0.5, job.t);
-    }
-    if (job.n <= 0) {
-      q.shift();
-      notify(c.w, `${p.params.name} crafted ${ITEMS[job.s]?.n ?? job.s}`);
-    }
+  const q = c.w.queue;
+  if (!q.length) return;
+  const job = q[0];
+  job.left -= dt;
+  while (job.left <= 0 && job.n > 0) {
+    addItem(c.w.me, job.s, job.per);
+    job.n -= job.per;
+    job.left += Math.max(0.5, job.t);
+  }
+  if (job.n <= 0) {
+    q.shift();
+    notify(c.w, `Crafted ${ITEMS[job.s]?.n ?? job.s}`);
   }
 }
 
@@ -923,4 +1069,3 @@ export function settle(w: World, g: Graph) {
   }
 }
 
-export type { Slot };

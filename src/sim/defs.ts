@@ -1,5 +1,6 @@
 export type PortKind = 'power' | 'fluid' | 'item';
-export type PortDef = { key: string; label: string; kind: PortKind; dir: 'in' | 'out'; when?: string };
+export type Side = 'left' | 'right' | 'top' | 'bottom';
+export type PortDef = { key: string; label: string; kind: PortKind; dir: 'in' | 'out'; when?: string; side?: Side };
 export type ParamDef = {
   key: string;
   label: string;
@@ -35,6 +36,12 @@ export interface Def {
   /** spatial radius in metres, drawn on the board when selected */
   radius?: (p: Record<string, unknown>) => number;
   tips?: string[];
+  /** attaches to one of these deployables instead of standing free */
+  attach?: string[];
+  /** max attachments of this kind per host */
+  maxPerHost?: number;
+  /** counts as root power for a Root Combiner */
+  root?: boolean;
 }
 
 const pin = (key: string, label: string): PortDef => ({ key, label, kind: 'power', dir: 'in' });
@@ -54,11 +61,17 @@ const consumer = (
   id: string, name: string, icon: string, draw: number, info: string, pass = true, cat: Category = 'devices',
 ): Def => ({ id, name, icon, cat, draw, info, ports: pass ? [PIN, PASS] : [PIN] });
 
-const battery = (id: string, name: string, icon: string, out: number, cap: number): Def => ({
-  id, name, icon, cat: 'power', info: `Stores ${cap.toLocaleString()} rWm and outputs up to ${out} rW. Charges at 80% efficiency, max input ${out * 4} rW. Needs 5 seconds of charge before it discharges.`,
+const battery = (id: string, name: string, icon: string, out: number, cap: number, start: number): Def => ({
+  id, name, icon, cat: 'power', root: true,
+  info: `Stores ${cap.toLocaleString()} rWm and outputs up to ${out} rW. Charges at 80% efficiency from up to ${out * 4} rW of input. Placed with ${start} rWm.`,
   ports: [PIN, POUT],
-  params: [{ key: 'charge', label: 'Starting charge (rWm)', type: 'float', default: 0, min: 0, max: cap, simOnly: true }],
-  tips: ['Can be wired in series', 'Block discharge with a Blocker, Switch or RF Receiver on the output'],
+  params: [{ key: 'charge', label: 'Starting charge (rWm)', type: 'float', default: start, min: 0, max: cap, simOnly: true }],
+  tips: [
+    'Wiring batteries in series raises the power available on the line, not the capacity',
+    'After running flat it needs a couple of seconds of charge before it outputs again',
+    'A battery can never charge from its own output, even through a loop',
+    'Block discharge with a Blocker, Switch or RF Receiver on the output',
+  ],
 });
 
 const container = (id: string, name: string, icon: string, slots: number, info: string, cat: Category = 'storage'): Def => ({
@@ -85,7 +98,7 @@ export const EXPLOSIVES: Record<string, { name: string; fuse: number; radius: nu
 export const DEFS: Def[] = [
   // ───────────── Power
   {
-    id: 'solar', name: 'Large Solar Panel', icon: 'electric.solarpanel.large', cat: 'power',
+    id: 'solar', name: 'Large Solar Panel', icon: 'electric.solarpanel.large', cat: 'power', root: true,
     info: 'Outputs 0–20 rW depending on the sun. Follows the time of day on the sim bar.',
     ports: [POUT],
     params: [
@@ -94,100 +107,104 @@ export const DEFS: Def[] = [
     ],
   },
   {
-    id: 'wind', name: 'Wind Turbine', icon: 'generator.wind.scrap', cat: 'power',
-    info: 'Outputs 0–150 rW depending on wind and altitude.',
+    id: 'wind', name: 'Wind Turbine', icon: 'generator.wind.scrap', cat: 'power', root: true,
+    info: 'Outputs 0–150 rW. Wind gusts change it over time, and the higher above the terrain it stands, the stronger and steadier the wind.',
     ports: [POUT],
     params: [
       { key: 'wind', label: 'Follow wind simulation', type: 'bool', default: true },
-      { key: 'height', label: 'Height (floors above ground)', type: 'int', default: 4, min: 0, max: 12 },
+      { key: 'height', label: 'Height above terrain (m)', type: 'int', default: 36, min: 0, max: 250 },
       { key: 'amount', label: 'Fixed output', type: 'int', default: 150, min: 0, max: 150, simOnly: true },
     ],
   },
   {
-    id: 'fuelgen', name: 'Small Generator', icon: 'electric.fuelgenerator.small', cat: 'power', slots: 1,
+    id: 'fuelgen', name: 'Small Generator', icon: 'electric.fuelgenerator.small', cat: 'power', slots: 1, root: true,
     info: 'Burns Low Grade Fuel (4 per minute) and outputs 40 rW. Force Start / Force Stop control it remotely.',
     ports: [pin('start', 'Force Start'), pin('stop', 'Force Stop'), POUT],
     params: [{ key: 'on', label: 'Turned on', type: 'bool', default: true }],
     press: 'toggle',
   },
   {
-    id: 'testgen', name: 'Test Generator', icon: 'electric.generator.small', cat: 'power',
+    id: 'testgen', name: 'Test Generator', icon: 'electric.generator.small', cat: 'power', root: true,
     info: 'Admin-spawned generator. Each of its 3 outputs gives the set amount.',
     ports: [pout('o1', 'Power Output 1'), pout('o2', 'Power Output 2'), pout('o3', 'Power Output 3')],
     params: [{ key: 'amount', label: 'Output per port', type: 'int', default: 100, min: 0, max: 1000 }],
   },
-  battery('battery_s', 'Small Rechargeable Battery', 'electric.battery.rechargable.small', 15, 400),
-  battery('battery_m', 'Medium Rechargeable Battery', 'electric.battery.rechargable.medium', 50, 9000),
-  battery('battery_l', 'Large Rechargeable Battery', 'electric.battery.rechargable.large', 100, 24000),
+  battery('battery_s', 'Small Rechargeable Battery', 'electric.battery.rechargable.small', 15, 400, 37),
+  battery('battery_m', 'Medium Rechargeable Battery', 'electric.battery.rechargable.medium', 50, 9000, 100),
+  battery('battery_l', 'Large Rechargeable Battery', 'electric.battery.rechargable.large', 100, 24000, 200),
   {
-    id: 'rootcombiner', name: 'Root Combiner', icon: 'electrical.combiner', cat: 'power',
-    info: 'Adds two root power sources (generators, panels, batteries) into one output. Only accepts root power.',
+    id: 'rootcombiner', name: 'Root Combiner', icon: 'electrical.combiner', cat: 'power', root: true,
+    info: 'Adds two root power sources into one output. Only takes power straight from generators, solar panels, batteries, splitters, pressure pads, reactive targets or other root combiners.',
+    tips: ['Anything else on an input (a branch, switch, logic gate…) gives no power', 'Max 16 components between a power source and the combiner, or it shorts out (Short Circuit / Max Depth)', 'Never recombines power that already went through it, so loops give nothing'],
     ports: [pin('a', 'Power In 1'), pin('b', 'Power In 2'), POUT],
   },
 
   // ───────────── Logic
   {
-    id: 'branch', name: 'Electrical Branch', icon: 'electrical.branch', cat: 'logic', draw: 1,
-    info: 'Sends a set amount out of Branch Out and the rest out of Power Out. Uses 1 rW.',
+    id: 'branch', name: 'Electrical Branch', icon: 'electrical.branch', cat: 'logic', draw: 0,
+    info: 'Sends a set amount out of Branch Out and the rest out of Power Out. Uses no power since the 2024 electricity update.',
     ports: [PIN, pout('branch', 'Branch Out'), POUT],
-    params: [{ key: 'amount', label: 'Branch amount', type: 'int', default: 2, min: 2, max: 10000 }],
+    params: [{ key: 'amount', label: 'Branch amount', type: 'int', default: 2, min: 1, max: 10000 }],
   },
   {
-    id: 'splitter', name: 'Splitter', icon: 'electric.splitter', cat: 'logic', draw: 1,
-    info: 'Splits power evenly between the outputs that are connected. Uses 1 rW.',
+    id: 'splitter', name: 'Splitter', icon: 'electric.splitter', cat: 'logic', draw: 0,
+    info: 'Splits power evenly between the outputs that are connected. Leftover power goes to Output 1, then 2 (16 rW → 6/5/5). Counts as root power for a Root Combiner.',
+    root: true,
     ports: [PIN, pout('o1', 'Power Out 1'), pout('o2', 'Power Out 2'), pout('o3', 'Power Out 3')],
   },
   {
-    id: 'blocker', name: 'Blocker', icon: 'electric.blocker', cat: 'logic', draw: 1,
+    id: 'blocker', name: 'Blocker', icon: 'electric.blocker', cat: 'logic', draw: 0,
     info: 'Passes power through unless Block Passthrough is powered.',
     ports: [PIN, pin('block', 'Block Passthrough'), POUT],
   },
   {
-    id: 'memorycell', name: 'Memory Cell', icon: 'electrical.memorycell', cat: 'logic', draw: 1,
+    id: 'memorycell', name: 'Memory Cell', icon: 'electrical.memorycell', cat: 'logic', draw: 0,
     info: 'A 1-bit store. Set turns it on, Reset turns it off, Toggle flips it. Output is powered when on, Inverted when off.',
+    tips: ['Looping its output back into itself through fewer than 8 components short-circuits it', 'Known bug: constant power on Toggle flips it on every circuit update (e.g. solar or wind changes). Pulse Toggle instead'],
     ports: [PIN, pin('set', 'Set'), pin('reset', 'Reset'), pin('toggle', 'Toggle'), pout('inv', 'Power Out Inverted'), POUT],
   },
   {
     id: 'and', name: 'AND Switch', icon: 'electric.andswitch', cat: 'logic', draw: 0,
-    info: 'Outputs the greater input only while BOTH inputs are powered.',
+    info: 'Outputs the greater input only while BOTH inputs are powered. Ties take Input 1.',
     ports: [pin('a', 'Power In 1'), pin('b', 'Power In 2'), POUT],
   },
   {
-    id: 'or', name: 'OR Switch', icon: 'electric.orswitch', cat: 'logic', draw: 1,
-    info: 'Outputs the greater input while EITHER input is powered.',
+    id: 'or', name: 'OR Switch', icon: 'electric.orswitch', cat: 'logic', draw: 0,
+    info: 'Outputs the greater input while EITHER input is powered. Ties take Input 1.',
     ports: [pin('a', 'Power In 1'), pin('b', 'Power In 2'), POUT],
   },
   {
-    id: 'xor', name: 'XOR Switch', icon: 'electric.xorswitch', cat: 'logic', draw: 1,
+    id: 'xor', name: 'XOR Switch', icon: 'electric.xorswitch', cat: 'logic', draw: 0,
     info: 'Outputs only while exactly one input is powered.',
     ports: [pin('a', 'Power In 1'), pin('b', 'Power In 2'), POUT],
   },
   {
-    id: 'switch', name: 'Switch', icon: 'electric.switch', cat: 'logic', draw: 1, press: 'toggle',
+    id: 'switch', name: 'Switch', icon: 'electric.switch', cat: 'logic', draw: 0, press: 'toggle',
     info: 'A toggle switch. Tap it on the board, or drive it with Switch On / Switch Off.',
     ports: [PIN, pin('on', 'Switch On'), pin('off', 'Switch Off'), POUT],
     params: [{ key: 'on', label: 'On', type: 'bool', default: false }],
   },
   {
-    id: 'smartswitch', name: 'Smart Switch', icon: 'smart.switch', cat: 'logic', draw: 1, press: 'toggle',
+    id: 'smartswitch', name: 'Smart Switch', icon: 'smart.switch', cat: 'logic', draw: 0, press: 'toggle',
     info: 'A switch you can flip from the Rust+ app. Tap it on the board to simulate the app.',
     ports: [PIN, pin('on', 'Switch On'), pin('off', 'Switch Off'), POUT],
     params: [{ key: 'on', label: 'On', type: 'bool', default: false }],
   },
   {
-    id: 'button', name: 'Button', icon: 'electric.button', cat: 'logic', draw: 1, press: 'press',
-    info: 'Passes power for the press duration when pressed. Outputs a 2 rW pulse when it has no input.',
+    id: 'button', name: 'Button', icon: 'electric.button', cat: 'logic', draw: 0, press: 'press',
+    info: 'Passes power for the press duration when pressed (0.25 s by default). Outputs at least 2 rW, even with no input.',
     ports: [PIN, POUT],
-    params: [{ key: 'duration', label: 'Press duration (s)', type: 'float', default: 5, min: 0.25, max: 60 }],
+    params: [{ key: 'duration', label: 'Press duration (s)', type: 'float', default: 0.25, min: 0.25, max: 60 }],
   },
   {
-    id: 'timer', name: 'Timer', icon: 'electric.timer', cat: 'logic', draw: 1,
+    id: 'timer', name: 'Timer', icon: 'electric.timer', cat: 'logic', draw: 0,
     info: 'When Toggle On receives power, passes power through for the set duration.',
+    tips: ['Known issue: the 0.25 s minimum can be too fast to register on busy servers'],
     ports: [PIN, pin('trig', 'Toggle On'), POUT],
     params: [{ key: 'duration', label: 'Duration (s)', type: 'float', default: 30, min: 0.25, max: 3600 }],
   },
   {
-    id: 'rand', name: 'RAND Switch', icon: 'electric.random.switch', cat: 'logic', draw: 1,
+    id: 'rand', name: 'RAND Switch', icon: 'electric.random.switch', cat: 'logic', draw: 0,
     info: 'Each time Set is powered it rolls 50/50 to allow passthrough. Reset turns it off.',
     ports: [PIN, pin('set', 'Set'), pin('reset', 'Reset'), POUT],
   },
@@ -241,7 +258,7 @@ export const DEFS: Def[] = [
   // ───────────── Sensors
   {
     id: 'hbhf', name: 'HBHF Sensor', icon: 'electric.hbhfsensor', cat: 'sensors', draw: 1,
-    info: 'Outputs 1 rW per player detected within its range (up to the input minus 1).',
+    info: 'Uses 1 rW and outputs 1 rW per player detected within its range.',
     ports: [PIN, POUT],
     params: [
       { key: 'range', label: 'Range (m)', type: 'float', default: 10, min: 1, max: 10 },
@@ -260,26 +277,26 @@ export const DEFS: Def[] = [
     ],
   },
   {
-    id: 'pressurepad', name: 'Pressure Pad', icon: 'electric.pressurepad', cat: 'sensors', draw: 1,
-    info: 'Passes power while a player stands on it. Without input it gives a 1 rW pulse.',
+    id: 'pressurepad', name: 'Pressure Pad', icon: 'electric.pressurepad', cat: 'sensors', draw: 0,
+    info: 'Passes power while a player stands on it. Uses no power, and pulses 1 rW when stepped on even with no input. Counts as root power.',
+    root: true,
     ports: [PIN, POUT],
     radius: () => 1,
   },
   {
     id: 'seismic', name: 'Seismic Sensor', icon: 'electric.seismicsensor', cat: 'sensors', draw: 1,
-    info: 'Passes power through while it feels vibration from an explosion within range. Set off an explosive nearby to trip it.',
+    info: 'Uses 1 rW. Outputs 1, 2 or 3 rW for 3 seconds when it feels an explosion within range, depending on how big the explosive is.',
     ports: [PIN, POUT],
     params: [
       { key: 'range', label: 'Range (m)', type: 'float', default: 10, min: 1, max: 30 },
-      { key: 'hold', label: 'Hold after vibration (s)', type: 'float', default: 3, min: 0.25, max: 30, simOnly: true },
     ],
     radius: (p) => Number(p.range ?? 10),
   },
   {
     id: 'storagemonitor', name: 'Storage Monitor', icon: 'storage.monitor', cat: 'sensors', draw: 1,
-    info: 'Attaches to the nearest box or tool cupboard within 3 m. Pulses 1 rW when the contents change (needs 2 rW input).',
+    info: 'Snaps onto a Large Wood Box or Tool Cupboard. Pulses 1 rW when the contents change (needs 2 rW input).',
     ports: [PIN, POUT],
-    radius: () => 3,
+    attach: ['box_l', 'tc'], maxPerHost: 1,
   },
   {
     id: 'smartalarm', name: 'Smart Alarm', icon: 'smart.alarm', cat: 'sensors', draw: 1,
@@ -322,16 +339,20 @@ export const DEFS: Def[] = [
 
   // ───────────── Defense
   {
-    id: 'turret', name: 'Auto Turret', icon: 'autoturret', cat: 'defense', draw: 10, slots: 6,
-    info: 'Needs 10 rW to run and 11 rW for its outputs. Targets unauthorized players within 30 m while it has ammo.',
-    ports: [PIN, pout('target', 'Has Target'), pout('low', 'Low Ammo'), pout('none', 'No Ammo'), PASS],
-    params: [{ key: 'range', label: 'Range (m)', type: 'float', default: 30, min: 1, max: 30 }],
+    id: 'turret', name: 'Auto Turret', icon: 'autoturret', cat: 'defense', draw: 10, slots: 7,
+    info: 'Needs a gun and matching ammo, 10 rW to run and 11 rW for its outputs. Shoots unauthorized players within range.',
+    ports: [PIN, { ...pout('target', 'Has Target'), side: 'top' }, { ...pout('low', 'Low Ammo'), side: 'top' }, { ...pout('none', 'No Ammo'), side: 'top' }],
+    params: [
+      { key: 'range', label: 'Range (m)', type: 'float', default: 30, min: 1, max: 30 },
+      { key: 'peace', label: 'Peacekeeper (only shoots hostile players)', type: 'bool', default: false },
+    ],
+    tips: ['Put one gun and its ammo in the turret', 'Low Ammo turns on below one magazine', 'Has no passthrough'],
     radius: (p) => Number(p.range ?? 30),
   },
   {
     id: 'sam', name: 'SAM Site', icon: 'samsite', cat: 'defense', draw: 25, slots: 6,
     info: 'Needs 25 rW to run and 26 rW for its outputs. Toggle "Aircraft nearby" to simulate a target.',
-    ports: [PIN, pout('target', 'Has Target'), pout('low', 'Low Ammo'), pout('none', 'No Ammo'), PASS],
+    ports: [PIN, { ...pout('target', 'Has Target'), side: 'top' }, { ...pout('low', 'Low Ammo'), side: 'top' }, { ...pout('none', 'No Ammo'), side: 'top' }, PASS],
     params: [{ key: 'aircraft', label: 'Aircraft nearby', type: 'bool', default: false, simOnly: true }],
   },
   {
@@ -426,10 +447,17 @@ export const DEFS: Def[] = [
   },
   {
     id: 'crafter', name: 'Industrial Crafter', icon: 'industrial.crafter', cat: 'industrial', draw: 1, slots: 18,
-    info: 'Place it within 3 m of a workbench. Crafts its blueprint templates from the items piped in, at that workbench’s level.',
+    info: 'Attaches to a workbench (max 2 per bench). Crafts its blueprint templates from the items piped in, at that workbench’s level.',
+    attach: ['wb1', 'wb2', 'wb3'], maxPerHost: 2,
     ports: [PIN, pin('on', 'Turn On'), pin('off', 'Turn Off'), pin('toggle', 'Toggle'), iin('iin', 'Industrial In'), PASS, iout('iout', 'Industrial Out')],
     params: [{ key: 'on', label: 'Turned on', type: 'bool', default: true }],
     press: 'toggle',
+  },
+  {
+    id: 'hopper', name: 'Hopper', icon: 'hopper', cat: 'industrial', draw: 1,
+    info: 'Attaches to a container. While powered it sucks up dropped items within 3 m into that container.',
+    ports: [PIN, PASS],
+    attach: ['box_s', 'box_l', 'barrel_v', 'barrel_h', 'coffin', 'fridge', 'locker', 'tc', 'dropbox', 'furnace', 'furnace_l', 'refinery', 'efurnace', 'godbox', 'voidbox'], maxPerHost: 1,
     radius: () => 3,
   },
 
@@ -476,25 +504,16 @@ export const DEFS: Def[] = [
     info: 'Burns wood to turn Crude Oil into Low Grade Fuel (1 → 3).',
     ports: [...ADAPTOR], params: [ADAPTOR_PARAM, { key: 'on', label: 'Lit', type: 'bool', default: false }],
   },
-  {
-    id: 'recycler', name: 'Recycler', icon: 'recycler', cat: 'crafting', slots: 12, adaptor: true, press: 'toggle',
-    info: 'Breaks items down into components, one every 5 seconds.',
-    ports: [...ADAPTOR],
-    params: [
-      ADAPTOR_PARAM,
-      { key: 'on', label: 'Running', type: 'bool', default: false },
-      { key: 'rad', label: 'Radtown recycler (higher yields)', type: 'bool', default: false },
-    ],
-  },
 
   // ───────────── Simulator
   {
-    id: 'player', name: 'Player', icon: 'hazmatsuit', cat: 'sim', slots: 30,
+    id: 'player', name: 'Player', icon: 'hazmatsuit', cat: 'sim',
     info: 'Drag players around to trip sensors and turrets. Players near a workbench can craft.',
     ports: [],
     params: [
       { key: 'name', label: 'Name', type: 'text', default: 'Survivor' },
       { key: 'authed', label: 'Authorized on turrets / TC', type: 'bool', default: true },
+      { key: 'hostile', label: 'Hostile (peacekeeper turrets shoot them)', type: 'bool', default: false },
     ],
   },
   {
@@ -512,6 +531,17 @@ export const DEFS: Def[] = [
     radius: (p) => EXPLOSIVES[String(p.type)]?.radius ?? 4,
   },
   {
+    id: 'reactive', name: 'Reactive Target', icon: 'target.reactive', cat: 'sensors', draw: 1, press: 'press', root: true,
+    info: 'Knocks down when shot. While down it passes power, or pulses 1 rW with no input. Lower and Reset work without power.',
+    ports: [PIN, pin('lower', 'Lower'), pin('reset', 'Reset'), POUT],
+    tips: ['Known bug: wired into a Counter’s side input it can send a ghost pulse and count twice'],
+  },
+  {
+    id: 'pile', name: 'Dropped Items', icon: 'sim.pile', cat: 'sim', slots: 12,
+    info: 'Items lying on the ground, e.g. loot from a destroyed box. Hoppers pick these up.',
+    ports: [],
+  },
+  {
     id: 'godbox', name: 'God Box', icon: 'sim.godbox', cat: 'sim', slots: 48, adaptor: true,
     info: 'Spawns the items you pick: endless, a fixed amount, or filling every slot.',
     ports: [...ADAPTOR], params: [ADAPTOR_PARAM],
@@ -523,7 +553,16 @@ export const DEFS: Def[] = [
   },
 ];
 
+const BOTTOM_INPUTS = new Set(['set', 'reset', 'toggle', 'on', 'off', 'trig', 'inc', 'dec', 'clear', 'start', 'stop', 'block', 'pump', 'lower']);
+for (const d of DEFS) {
+  d.ports = d.ports.map((p) => ({ ...p, side: p.side ?? (p.dir === 'in' && p.kind === 'power' && BOTTOM_INPUTS.has(p.key) ? 'bottom' : p.dir === 'in' ? 'left' : 'right') }));
+}
+
 export const DEF: Record<string, Def> = Object.fromEntries(DEFS.map((d) => [d.id, d]));
+export const ANNOTATIONS = [
+  { id: 'note_box', name: 'Outline box', info: 'A hollow box to group parts on your baseplate.' },
+  { id: 'note_text', name: 'Text label', info: 'A simple text label.' },
+];
 
 export const CATEGORIES: { id: Category; label: string }[] = [
   { id: 'power', label: 'Power' },

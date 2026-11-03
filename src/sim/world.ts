@@ -37,12 +37,16 @@ export interface World {
   notices: Notice[];
   blasts: Blast[]; // recent explosions (for drawing)
   destroy: string[]; // node ids blown up, removed by the app
+  spawn: { def: string; x: number; y: number; inv: Slot[] }[]; // nodes the sim wants created (loot piles)
+  bugs: boolean; // simulate known Rust bugs
+  me: Slot[]; // "My inventory"
+  queue: { s: string; n: number; t: number; left: number; per: number }[]; // my crafting queue
 }
 
 export type Blast = { id: number; x: number; y: number; r: number; at: number; kind: string; dud?: boolean };
 
 export function newWorld(): World {
-  return { nodes: {}, time: 0, tod: 9, wind: 0.5, rain: false, lockTime: false, flow: {}, pipeItem: {}, pipeAt: {}, notices: [], blasts: [], destroy: [] };
+  return { nodes: {}, time: 0, tod: 9, wind: 0.75, rain: false, lockTime: false, flow: {}, pipeItem: {}, pipeAt: {}, notices: [], blasts: [], destroy: [], spawn: [], bugs: true, me: Array(30).fill(null), queue: [] };
 }
 
 export const world: { current: World } = { current: newWorld() };
@@ -113,11 +117,12 @@ export function takeItem(inv: Slot[], s: string, n: number, from = 0, to = inv.l
 export function snapshotWorld(w: World) {
   const nodes: Record<string, Pick<WNode, 'def' | 'params' | 'inv' | 'st'>> = {};
   for (const [id, n] of Object.entries(w.nodes)) nodes[id] = { def: n.def, params: n.params, inv: n.inv, st: n.st };
-  return JSON.parse(JSON.stringify({ nodes, time: w.time, tod: w.tod, wind: w.wind, rain: w.rain, lockTime: w.lockTime }));
+  return JSON.parse(JSON.stringify({ nodes, time: w.time, tod: w.tod, wind: w.wind, rain: w.rain, lockTime: w.lockTime, bugs: w.bugs, me: w.me }));
 }
 export function restoreWorld(snap: any): World {
   const w = newWorld();
-  Object.assign(w, { time: snap.time ?? 0, tod: snap.tod ?? 9, wind: snap.wind ?? 0.5, rain: !!snap.rain, lockTime: !!snap.lockTime });
+  Object.assign(w, { time: snap.time ?? 0, tod: snap.tod ?? 9, wind: snap.wind ?? 0.75, rain: !!snap.rain, lockTime: !!snap.lockTime, bugs: snap.bugs !== false });
+  if (Array.isArray(snap.me)) w.me = [...snap.me, ...Array(Math.max(0, 30 - snap.me.length)).fill(null)].slice(0, 30);
   for (const [id, n] of Object.entries<any>(snap.nodes ?? {})) {
     if (!DEF[n.def]) continue;
     const base = makeNode(id, n.def, n.params);

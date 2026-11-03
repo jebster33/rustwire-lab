@@ -39,7 +39,7 @@ const firstSentence = (s = '') => {
 
 const out = {};
 for (const [short, v] of Object.entries(raw)) {
-  const it = { n: titleCase(v.name || short), g: v.group || 'misc', d: firstSentence(v.description) };
+  const it = { n: titleCase(v.name || short), g: v.group || 'misc', d: firstSentence(v.description), id: v.identifier };
   const cd = v.craftData;
   if (cd && cd.recipie && cd.recipie.craftCost && cd.recipie.craftCost.length) {
     it.c = {
@@ -57,8 +57,12 @@ for (const [short, v] of Object.entries(raw)) {
   out[short] = it;
 }
 
+// Newer items missing from the scraped dataset
+out['hopper'] = out['hopper'] ?? { n: 'Hopper', g: 'electrical', d: 'Sucks up dropped items around it while powered and puts them in the container it is attached to.', c: { y: 1, wb: 1, t: 10, i: [['metal.fragments', 200]] } };
+
 // Simulator-only entries that aren't in the dataset
 out['sim.godbox'] = { n: 'God Box', g: 'sim', d: 'Simulator-only container that spawns the items you choose.' };
+out['sim.pile'] = { n: 'Dropped Items', g: 'sim', d: 'A pile of items lying on the ground.' };
 out['sim.voidbox'] = { n: 'Void Box', g: 'sim', d: 'Simulator-only container that deletes anything put in it.' };
 
 mkdirSync(new URL('../src/data/', import.meta.url), { recursive: true });

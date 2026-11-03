@@ -1,13 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useStore, useTick } from '../store';
 import { DEF, BATTERY, WATER_CAP, WB_TIER, WIRE_COLORS, portsOf, type ParamDef } from '../sim/defs';
-import { world, addItem, countItem, takeItem, type WNode, type Plant } from '../sim/world';
-import { rectDist, type Filter } from '../sim/engine';
-import { graphOf } from '../store';
+import { world, addItem, countItem, takeItem, notify, type WNode, type Plant } from '../sim/world';
+import { type Filter } from '../sim/engine';
 import { ITEMS, itemName, rawCost, stackSize } from '../data/items';
 import { PLANT_TYPES, PLANT, stageOf, randomGenes, GENE_INFO, harvestYield, stageStart } from '../sim/plants';
 import { ItemIcon, Ic } from './icons';
-import { InventoryGrid, HandBar, ItemPicker } from './Inventory';
+import { InventoryGrid, HandBar, ItemPicker, BlueprintPicker, filterFor, ME } from './Inventory';
+import { WIRE_COLORS as NOTE_COLORS } from '../sim/defs';
 import { fmtTime } from './DepNode';
 import SimPanel from './SimPanel';
 
@@ -113,7 +113,7 @@ function AddItemButton({ n, label = 'Add item', filter }: { n: WNode; label?: st
       {open && (
         <ItemPicker
           title={`${label}, ${DEF[n.def].name}`}
-          filter={filter}
+          filter={filter ?? filterFor(n.id)}
           onClose={() => setOpen(false)}
           onPick={(s, a) => { addItem(n.inv, s, a); poke(); setOpen(false); }}
         />
@@ -246,10 +246,10 @@ function CrafterPanel({ n }: { n: WNode }) {
         <InventoryGrid nodeId={n.id} from={12} to={18} zone />
       </div>
       {slot != null && (
-        <ItemPicker
-          title="Pick a blueprint"
+        <BlueprintPicker
+          title="Set blueprint template"
+          maxTier={tier || 3}
           withAmount={false}
-          filter={(s) => !!ITEMS[s].c}
           onClose={() => setSlot(null)}
           onPick={(s) => { templates[slot] = s; setSlot(null); poke(); }}
         />
@@ -282,9 +282,7 @@ function PlanterPanel({ n }: { n: WNode }) {
   const [type, setType] = useState('hemp');
   const [genes, setGenes] = useState('GGGYYY');
   const plants: (Plant | null)[] = n.st.plants ?? [];
-  const playerId = useStore((s) => s.lootPlayer) ?? Object.values(world.current.nodes).find((x) => x.def === 'player')?.id;
-  const target = playerId ? world.current.nodes[playerId] : n;
-  const to = target ?? n;
+  const to = { inv: world.current.me, def: 'me', params: { name: 'My inventory' } } as unknown as WNode;
 
   const plant = (i: number) => { plants[i] = { type, genes, age: 0, health: 1 }; poke(); };
   const harvest = (i: number) => {
@@ -349,69 +347,48 @@ function PlanterPanel({ n }: { n: WNode }) {
           <input type="checkbox" checked={!!n.st.auto} onChange={(e) => { n.st.auto = e.target.checked; poke(); }} />
           Auto-harvest into planter storage<span className="sim-tag">sim</span>
         </label>
-        <p className="help">Neighbouring plants crossbreed when they leave the Crossbreed stage. G, Y and H are good genes; W and X are bad. Harvests and clones go to {to.def === 'player' ? to.params.name : 'the planter'}.</p>
+        <p className="help">Neighbouring plants crossbreed when they leave the Crossbreed stage. G, Y and H are good genes; W and X are bad. Harvests and clones go to My inventory.</p>
       </div>
     </>
   );
 }
 
-function WorkbenchPanel({ n }: { n: WNode }) {
+function CraftQueue() {
   useTick();
-  const nodes = useStore((s) => s.nodes);
   const poke = useStore((s) => s.poke);
-  const tier = WB_TIER[n.def];
-  const [q, setQ] = useState('');
-  const [amount, setAmount] = useState(1);
-  const g = graphOf(nodes, []);
-  const near = Object.values(world.current.nodes).filter((p) => p.def === 'player' && rectDist(g.rects[n.id], g.rects[p.id]) <= 3);
-  const [pid, setPid] = useState<string | null>(null);
-  const player = near.find((p) => p.id === pid) ?? near[0];
-  const list = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    return Object.keys(ITEMS).filter((k) => ITEMS[k].c && ITEMS[k].c!.wb <= tier && (!t || ITEMS[k].n.toLowerCase().includes(t))).sort((a, b) => ITEMS[a].n.localeCompare(ITEMS[b].n)).slice(0, 80);
-  }, [q, tier]);
-
-  const craft = (s: string) => {
-    if (!player) return;
-    const rec = ITEMS[s].c!;
-    const times = Math.ceil(amount / rec.y);
-    for (const [ing, a] of rec.i) if (countItem(player.inv, ing) < a * times) return;
-    for (const [ing, a] of rec.i) takeItem(player.inv, ing, a * times);
-    const queue = (player.st.queue ??= []);
-    queue.push({ s, n: times * rec.y, t: rec.t, left: rec.t, per: rec.y });
-    poke();
-  };
-
+  const queue = world.current.queue;
+  if (!queue.length) return null;
   return (
     <div className="section">
-      <h3>Craft at this bench</h3>
-      {!near.length && <p className="help">Drag a player within 3 m of the bench to craft from their inventory.</p>}
-      {near.length > 1 && (
-        <div className="field">
-          <label>Crafting player</label>
-          <select className="select" value={player?.id} onChange={(e) => setPid(e.target.value)}>
-            {near.map((p) => <option key={p.id} value={p.id}>{p.params.name}</option>)}
-          </select>
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-        <input className="search" placeholder={`Search level ${tier} recipes`} value={q} onChange={(e) => setQ(e.target.value)} />
-        <input className="input" style={{ width: 70 }} type="number" min={1} value={amount} onChange={(e) => setAmount(Math.max(1, Number(e.target.value)))} aria-label="Amount to craft" />
-      </div>
+      <h3>Crafting queue<span className="spacer" /><button className="btn ghost" onClick={() => { world.current.queue = []; poke(); }}>Clear</button></h3>
       <div className="list">
-        {list.map((s) => {
-          const rec = ITEMS[s].c!;
-          const times = Math.ceil(amount / rec.y);
-          const ok = !!player && rec.i.every(([ing, a]) => countItem(player.inv, ing) >= a * times);
+        {queue.map((c, i) => (
+          <div className="li" key={i}>
+            <ItemIcon s={c.s} size={28} />
+            <div className="grow"><div className="name">{itemName(c.s)} ×{c.n}</div><small>{i === 0 ? `${fmtTime(c.left)} until the next one` : 'Waiting'}</small></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AttachButtons({ n }: { n: WNode }) {
+  const nodes = useStore((s) => s.nodes);
+  const attach = useStore((s) => s.attach);
+  const kinds = Object.values(DEF).filter((d) => d.attach?.includes(n.def));
+  if (!kinds.length) return null;
+  return (
+    <div className="section">
+      <h3>Attachments</h3>
+      <div className="btnrow">
+        {kinds.map((d) => {
+          const have = nodes.filter((x) => x.parentId === n.id && x.data.def === d.id).length;
+          const max = d.maxPerHost ?? 1;
           return (
-            <div className="li" key={s}>
-              <ItemIcon s={s} size={30} />
-              <div className="grow">
-                <div className="name">{itemName(s)}{rec.wb ? `, WB${rec.wb}` : ''}</div>
-                <small>{rec.i.map(([ing, a]) => `${a * times} ${itemName(ing)}`).join(', ')}, {fmtTime(rec.t * times)}</small>
-              </div>
-              <button className="btn" disabled={!ok} onClick={() => craft(s)}>Craft</button>
-            </div>
+            <button key={d.id} className="btn" disabled={have >= max} onClick={() => attach(d.id, n.id)}>
+              <ItemIcon s={d.icon} size={20} />Attach {d.name}{max > 1 ? ` (${have}/${max})` : ''}
+            </button>
           );
         })}
       </div>
@@ -419,75 +396,77 @@ function WorkbenchPanel({ n }: { n: WNode }) {
   );
 }
 
-function PlayerPanel({ n }: { n: WNode }) {
+function WorkbenchPanel({ n }: { n: WNode }) {
   useTick();
   const poke = useStore((s) => s.poke);
-  const queue: { s: string; n: number; left: number; t: number }[] = n.st.queue ?? [];
+  const tier = WB_TIER[n.def];
+  const [open, setOpen] = useState(false);
+  const me = world.current.me;
+
+  const craft = (s: string, amount: number) => {
+    const rec = ITEMS[s].c!;
+    const times = Math.ceil(amount / rec.y);
+    const missing = rec.i.filter(([ing, a]) => countItem(me, ing) < a * times);
+    if (missing.length) {
+      notify(world.current, `Missing ${missing.map(([ing, a]) => `${a * times - countItem(me, ing)} ${itemName(ing)}`).join(', ')} in My inventory`, 'warn');
+      poke();
+      return;
+    }
+    for (const [ing, a] of rec.i) takeItem(me, ing, a * times);
+    world.current.queue.push({ s, n: times * rec.y, t: rec.t, left: rec.t, per: rec.y });
+    setOpen(false);
+    poke();
+  };
+
+  return (
+    <div className="section">
+      <h3>Craft at this bench</h3>
+      <p className="help" style={{ marginTop: 0, marginBottom: 10 }}>Crafts from My inventory. Level {tier} bench: items up to workbench {tier}.</p>
+      <button className="btn primary" onClick={() => setOpen(true)}><Ic.plus />Add blueprint</button>
+      {open && <BlueprintPicker title={`Craft at workbench ${tier}`} maxTier={tier} have={me} onClose={() => setOpen(false)} onPick={craft} />}
+    </div>
+  );
+}
+
+function MyInventory({ other }: { other?: string }) {
   return (
     <>
-      <div className="section">
-        <h3>Inventory<span className="spacer" /><AddItemButton n={n} label="Give item" /></h3>
-        <InventoryGrid nodeId={n.id} from={0} to={24} />
-        <div className="inv-label">Belt</div>
-        <InventoryGrid nodeId={n.id} from={24} to={30} zone />
-        <HandBar />
+      <div className="inv-label" style={{ marginTop: 12, display: 'flex', alignItems: 'center' }}>
+        <span style={{ flex: 1 }}>My inventory</span>
+        <MyGive />
       </div>
-      {queue.length > 0 && (
-        <div className="section">
-          <h3>Crafting queue<span className="spacer" /><button className="btn ghost" onClick={() => { n.st.queue = []; poke(); }}>Clear</button></h3>
-          <div className="list">
-            {queue.map((c, i) => (
-              <div className="li" key={i}>
-                <ItemIcon s={c.s} size={28} />
-                <div className="grow"><div className="name">{itemName(c.s)} ×{c.n}</div><small>{i === 0 ? `${fmtTime(c.left)} for next` : 'Waiting'}</small></div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <InventoryGrid nodeId={ME} from={0} to={24} other={other} />
+      <div className="inv-label">Belt</div>
+      <InventoryGrid nodeId={ME} from={24} to={30} zone other={other} />
+    </>
+  );
+}
+function MyGive() {
+  const [open, setOpen] = useState(false);
+  const poke = useStore((s) => s.poke);
+  return (
+    <>
+      <button className="btn ghost" style={{ height: 28 }} onClick={() => setOpen(true)}><Ic.plus />Give me items</button>
+      {open && <ItemPicker title="Add to My inventory" onClose={() => setOpen(false)} onPick={(s, a) => { addItem(world.current.me, s, a); setOpen(false); poke(); }} />}
     </>
   );
 }
 
 function LootPanel({ n }: { n: WNode }) {
   useTick();
-  const players = Object.values(world.current.nodes).filter((p) => p.def === 'player');
-  const loot = useStore((s) => s.lootPlayer);
-  const setLoot = useStore((s) => s.setLootPlayer);
-  const pl = players.find((p) => p.id === loot) ?? players[0];
   const def = DEF[n.def];
-  if (!def.slots || n.def === 'player' || n.def === 'crafter') return null;
-  const split = n.def === 'recycler' ? 6 : null;
+  if (!def.slots || n.def === 'crafter') return null;
   return (
     <div className="section">
       <h3>Contents<span className="spacer" /><AddItemButton n={n} /></h3>
-      {split ? (
-        <>
-          <div className="inv-label">Input</div>
-          <InventoryGrid nodeId={n.id} from={0} to={6} other={pl?.id} />
-          <div className="inv-label">Output</div>
-          <InventoryGrid nodeId={n.id} from={6} to={12} zone other={pl?.id} />
-        </>
-      ) : (
-        <InventoryGrid nodeId={n.id} other={pl?.id} />
-      )}
+      {n.def === 'turret' && <p className="help" style={{ marginTop: 0, marginBottom: 8 }}>Put a gun in and ammo it can fire.</p>}
+      <InventoryGrid nodeId={n.id} other={ME} />
       {n.def === 'voidbox' && (
         <dl className="stats" style={{ marginTop: 8 }}>
           {Object.entries<number>(n.st.voided ?? {}).map(([s, c]) => <FragmentRow key={s} a={itemName(s)} b={c.toLocaleString()} />)}
         </dl>
       )}
-      {pl && (
-        <>
-          <div className="inv-label" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12 }}>
-            {players.length > 1 ? (
-              <select className="select" style={{ height: 28 }} value={pl.id} onChange={(e) => setLoot(e.target.value)} aria-label="Player inventory">
-                {players.map((p) => <option key={p.id} value={p.id}>{p.params.name}’s inventory</option>)}
-              </select>
-            ) : <span>{pl.params.name}’s inventory</span>}
-          </div>
-          <InventoryGrid nodeId={pl.id} from={0} to={30} other={n.id} />
-        </>
-      )}
+      <MyInventory other={n.id} />
       <HandBar />
     </div>
   );
@@ -536,7 +515,11 @@ function EdgePanel({ id }: { id: string }) {
       </div>
       <div className="section">
         <h3>Shape</h3>
-        <p className="help">Double-click the {name.toLowerCase()} to add a bend. Drag bends to route it; double-click a bend to remove it.</p>
+        <div className="seg" style={{ marginBottom: 10 }}>
+          <button aria-pressed={edge.data.style !== 'straight'} onClick={() => { checkpoint(); setEdge(id, { style: 'curve' }); }}>Curved</button>
+          <button aria-pressed={edge.data.style === 'straight'} onClick={() => { checkpoint(); setEdge(id, { style: 'straight' }); }}>Straight</button>
+        </div>
+        <p className="help">Double-click the {name.toLowerCase()} to add a bend. Drag bends to route it; double-click a bend to remove it. Drag either end off its port to move or unplug it.</p>
         <div className="btnrow" style={{ marginTop: 8 }}>
           <button className="btn" disabled={!edge.data.points.length} onClick={() => { checkpoint(); setEdge(id, { points: [] }); }}>Remove bends</button>
           <button className="btn danger" onClick={removeSelected}><Ic.trash />Remove {name.toLowerCase()}</button>
@@ -551,6 +534,7 @@ function NodePanel({ id }: { id: string }) {
   const removeSelected = useStore((s) => s.removeSelected);
   const duplicateSelected = useStore((s) => s.duplicateSelected);
   const poke = useStore((s) => s.poke);
+  const setParam = useStore((s) => s.setParam);
   const n = world.current.nodes[id];
   if (!n) return null;
   const def = DEF[n.def];
@@ -561,17 +545,22 @@ function NodePanel({ id }: { id: string }) {
       <div className="insp-head">
         <div className="dep-icon"><ItemIcon s={def.icon} size={48} /></div>
         <div>
-          <h2>{n.def === 'player' ? n.params.name : def.name}</h2>
+          <h2>{n.def === 'player' ? n.params.name : n.params._label || def.name}</h2>
+          {n.params._label && n.def !== 'player' && <p style={{ marginTop: 2 }}>{def.name}</p>}
           <p>{def.info}</p>
         </div>
       </div>
       <Stats n={n} />
-      {params.length > 0 && (
-        <div className="section">
-          <h3>Settings</h3>
-          {params.map((p) => <ParamField key={p.key} n={n} p={p} />)}
-        </div>
-      )}
+      <div className="section">
+        <h3>Settings</h3>
+        {n.def !== 'player' && (
+          <div className="field">
+            <label htmlFor={`${n.id}-label`}>Name on the board</label>
+            <input id={`${n.id}-label`} className="input" placeholder={def.name} value={String(n.params._label ?? '')} maxLength={48} onChange={(e) => setParam(n.id, '_label', e.target.value)} />
+          </div>
+        )}
+        {params.map((p) => <ParamField key={p.key} n={n} p={p} />)}
+      </div>
       {BATTERY[n.def] && (
         <div className="section">
           <h3>Charge</h3>
@@ -593,7 +582,8 @@ function NodePanel({ id }: { id: string }) {
       {n.def === 'crafter' && <CrafterPanel n={n} />}
       {n.def.startsWith('planter') && <PlanterPanel n={n} />}
       {WB_TIER[n.def] && <WorkbenchPanel n={n} />}
-      {n.def === 'player' && <PlayerPanel n={n} />}
+      {WB_TIER[n.def] && <CraftQueue />}
+      <AttachButtons n={n} />
       <LootPanel n={n} />
       {def.tips && (
         <div className="section"><h3>Notes</h3><ul className="tips">{def.tips.map((t) => <li key={t}>{t}</li>)}</ul></div>
@@ -622,10 +612,13 @@ export default function Inspector() {
   const selNodes = useStore((s) => s.nodes.filter((n) => n.selected).map((n) => n.id).join(','));
   const selEdges = useStore((s) => s.edges.filter((e) => e.selected).map((e) => e.id).join(','));
   const ids = selNodes ? selNodes.split(',') : [];
+  const noteSel = useStore((s) => s.nodes.find((n) => n.id === ids[0])?.type === 'note');
   const eids = selEdges ? selEdges.split(',') : [];
   return (
     <div className="panel-scroll" style={{ padding: 0 }}>
-      {ids.length === 1 ? (
+      {ids.length === 1 && noteSel ? (
+        <NotePanel id={ids[0]} key={ids[0]} />
+      ) : ids.length === 1 ? (
         <NodePanel id={ids[0]} key={ids[0]} />
       ) : ids.length > 1 ? (
         <MultiPanel ids={ids} />
@@ -681,3 +674,35 @@ function MultiPanel({ ids }: { ids: string[] }) {
 }
 
 export { stackSize };
+
+function NotePanel({ id }: { id: string }) {
+  const node = useStore((s) => s.nodes.find((n) => n.id === id));
+  const setNote = useStore((s) => s.setNote);
+  const removeSelected = useStore((s) => s.removeSelected);
+  if (!node) return null;
+  const d = node.data as { kind: 'box' | 'text'; text: string; color: string; size?: number };
+  return (
+    <>
+      <div className="insp-head"><div><h2>{d.kind === 'box' ? 'Outline box' : 'Text label'}</h2><p>{d.kind === 'box' ? 'Drag the corners to resize. Click its title to rename it.' : 'Double-click the text on the board to edit it.'}</p></div></div>
+      <div className="section">
+        <div className="field">
+          <label htmlFor="note-text">{d.kind === 'box' ? 'Title' : 'Text'}</label>
+          <input id="note-text" className="input" value={d.text} onChange={(e) => setNote(id, { text: e.target.value })} />
+        </div>
+        {d.kind === 'text' && (
+          <div className="field">
+            <label htmlFor="note-size">Size</label>
+            <input id="note-size" type="range" min={12} max={96} step={2} value={d.size ?? 24} onChange={(e) => setNote(id, { size: Number(e.target.value) })} />
+          </div>
+        )}
+        <div className="field">
+          <label>Colour</label>
+          <div className="colors">
+            {NOTE_COLORS.map((c) => <button key={c.id} className="swatch" style={{ background: c.hex }} aria-label={c.label} aria-pressed={d.color === c.hex} onClick={() => setNote(id, { color: c.hex })} />)}
+          </div>
+        </div>
+      </div>
+      <div className="section"><button className="btn danger" onClick={removeSelected}><Ic.trash />Remove</button></div>
+    </>
+  );
+}

@@ -7,24 +7,45 @@ import { iconUrl } from '../data/items';
 
 type Pt = { x: number; y: number };
 
-function smoothPath(pts: Pt[]): string {
+type Dir = 'left' | 'right' | 'top' | 'bottom';
+const VEC: Record<Dir, Pt> = { left: { x: -1, y: 0 }, right: { x: 1, y: 0 }, top: { x: 0, y: -1 }, bottom: { x: 0, y: 1 } };
+
+function curvePath(pts: Pt[], sd: Dir, td: Dir): string {
+  const a = pts[0], b = pts[pts.length - 1];
+  const sv = VEC[sd], tv = VEC[td];
   if (pts.length === 2) {
-    const [a, b] = pts;
-    const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
-    const sag = Math.min(60, Math.hypot(b.x - a.x, b.y - a.y) * 0.08);
-    return `M${a.x},${a.y} C${a.x + dx},${a.y + sag} ${b.x - dx},${b.y + sag} ${b.x},${b.y}`;
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    const k = Math.max(40, dist * 0.45);
+    const sag = Math.min(50, dist * 0.07);
+    return `M${a.x},${a.y} C${a.x + sv.x * k},${a.y + sv.y * k + sag} ${b.x + tv.x * k},${b.y + tv.y * k + sag} ${b.x},${b.y}`;
   }
-  // Catmull-Rom through all points, with horizontal tangents at the ports
-  const p = [{ x: pts[0].x - 60, y: pts[0].y }, ...pts, { x: pts[pts.length - 1].x + 60, y: pts[pts.length - 1].y }];
-  let d = `M${pts[0].x},${pts[0].y}`;
+  // Catmull-Rom through all points, leaving and entering along each port's direction
+  const p = [{ x: a.x - sv.x * 60, y: a.y - sv.y * 60 }, ...pts, { x: b.x - tv.x * 60, y: b.y - tv.y * 60 }];
+  p[0] = { x: a.x - (pts[1].x - a.x), y: a.y - (pts[1].y - a.y) };
+  p[0] = { x: a.x - sv.x * 60, y: a.y - sv.y * 60 };
+  p[p.length - 1] = { x: b.x - tv.x * 60, y: b.y - tv.y * 60 };
+  let d = `M${a.x},${a.y}`;
   for (let i = 1; i < p.length - 2; i++) {
     const p0 = p[i - 1], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2];
-    const t = 0.5 / 3 * 2;
-    const c1 = { x: p1.x + (p2.x - p0.x) * t / 2, y: p1.y + (p2.y - p0.y) * t / 2 };
-    const c2 = { x: p2.x - (p3.x - p1.x) * t / 2, y: p2.y - (p3.y - p1.y) * t / 2 };
+    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
+    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
     d += ` C${c1.x},${c1.y} ${c2.x},${c2.y} ${p2.x},${p2.y}`;
   }
   return d;
+}
+
+/** Straight segments with sharp corners; adds an elbow when there are no bends. */
+function straightPath(pts: Pt[], sd: Dir): string {
+  let all = pts;
+  if (pts.length === 2) {
+    const [a, b] = pts;
+    if (a.x !== b.x && a.y !== b.y) {
+      all = sd === 'top' || sd === 'bottom'
+        ? [a, { x: a.x, y: (a.y + b.y) / 2 }, { x: b.x, y: (a.y + b.y) / 2 }, b]
+        : [a, { x: (a.x + b.x) / 2, y: a.y }, { x: (a.x + b.x) / 2, y: b.y }, b];
+    }
+  }
+  return all.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ');
 }
 
 function segDist(p: Pt, a: Pt, b: Pt) {
@@ -39,7 +60,7 @@ function lighten(hex: string, amt: number) {
   return `rgb(${r},${g},${b})`;
 }
 
-function CableEdgeView({ id, sourceX, sourceY, targetX, targetY, data, selected }: EdgeProps<CableEdgeT>) {
+function CableEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected }: EdgeProps<CableEdgeT>) {
   useTick();
   const { screenToFlowPosition } = useReactFlow();
   const setEdge = useStore((s) => s.setEdge);
@@ -48,7 +69,7 @@ function CableEdgeView({ id, sourceX, sourceY, targetX, targetY, data, selected 
   const kind = data?.kind ?? 'power';
   const hex = colorHex(data?.color ?? 'default');
   const all = [{ x: sourceX, y: sourceY }, ...points, { x: targetX, y: targetY }];
-  const d = smoothPath(all);
+  const d = data?.style === 'straight' ? straightPath(all, sourcePosition as Dir) : curvePath(all, sourcePosition as Dir, targetPosition as Dir);
   const w = world.current;
   const flow = w.flow[id] ?? 0;
   const itemActive = kind === 'item' && w.time - (w.pipeAt[id] ?? -99) < 1.6;
