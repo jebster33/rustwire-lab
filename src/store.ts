@@ -19,7 +19,7 @@ export type SaveMeta = { cloudId?: string; editKey?: string; visibility?: 'publi
 export type Background = { url: string; x: number; y: number; w: number; opacity: number } | null;
 
 type Snap = { nodes: DepNode[]; edges: CableEdge[]; world: unknown };
-type Pending = { node: string; handle: string; kind: PortKind; points: Pt[] } | null;
+type Pending = { node: string; handle: string; kind: PortKind; points: Pt[]; color?: string; style?: 'curve' | 'straight'; drag?: boolean } | null;
 
 export type SaveDoc = {
   v: 1;
@@ -55,7 +55,8 @@ interface State {
   poke: () => void;
   onNodesChange: (c: NodeChange<DepNode>[]) => void;
   onEdgesChange: (c: EdgeChange<CableEdge>[]) => void;
-  onConnect: (c: Connection, points?: Pt[]) => void;
+  onConnect: (c: Connection, points?: Pt[], look?: { color?: string; style?: 'curve' | 'straight' }) => void;
+  pickUp: (nodeId: string, handle: string) => boolean;
   reconnect: (old: CableEdge, c: Connection) => void;
   removeEdge: (id: string) => void;
   addNode: (def: string, pos: Pt, params?: Record<string, unknown>) => string | null;
@@ -226,7 +227,7 @@ export const useStore = create<State>((set, get) => {
       set((s) => ({ edges: applyEdgeChanges(changes, s.edges) }));
       if (changes.some((c) => c.type === 'remove')) resettle();
     },
-    onConnect: (c, points = []) => {
+    onConnect: (c, points = [], look = {}) => {
       if (!c.source || !c.target || !c.sourceHandle || !c.targetHandle) return;
       const kind = kindOf(c.source, c.sourceHandle);
       if (!kind || kind !== kindOf(c.target, c.targetHandle)) return;
@@ -239,7 +240,7 @@ export const useStore = create<State>((set, get) => {
         id: nanoid(8),
         source: c.source, sourceHandle: c.sourceHandle, target: c.target, targetHandle: c.targetHandle,
         type: 'cable',
-        data: { kind, color: get().wireColor, points, style: get().straight ? 'straight' : 'curve' },
+        data: { kind, color: look.color ?? get().wireColor, points, style: look.style ?? (get().straight ? 'straight' : 'curve') },
       };
       set({ edges: [...edges, edge] });
       const tgt = world.current.nodes[c.target];
@@ -248,6 +249,19 @@ export const useStore = create<State>((set, get) => {
         notify(world.current, `${DEF[src.def].name} isn’t root power. In Rust a Root Combiner ignores it.`, 'warn');
       }
       resettle();
+    },
+    pickUp: (nodeId, handle) => {
+      // Like in Rust: grabbing a port that already has a cable picks that cable's end up
+      const isIn = handle.startsWith('i:');
+      const e = get().edges.find((x) => (isIn ? x.target === nodeId && x.targetHandle === handle : x.source === nodeId && x.sourceHandle === handle));
+      if (!e || !e.data) return false;
+      get().checkpoint();
+      const other = isIn ? { node: e.source, handle: e.sourceHandle! } : { node: e.target, handle: e.targetHandle! };
+      // points always run outward from the end that stays plugged in
+      const points = isIn ? e.data.points : [...e.data.points].reverse();
+      set((s) => ({ edges: s.edges.filter((x) => x.id !== e.id), pending: { ...other, kind: e.data!.kind, points, color: e.data!.color, style: e.data!.style, drag: true } }));
+      resettle();
+      return true;
     },
     reconnect: (old, c) => {
       if (!c.source || !c.target || !c.sourceHandle || !c.targetHandle) return;

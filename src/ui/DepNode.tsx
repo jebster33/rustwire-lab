@@ -1,7 +1,7 @@
 import { memo, useLayoutEffect, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { DEF, BATTERY, WATER_CAP, EXPLOSIVES, portsOf, type PortDef, type Side } from '../sim/defs';
-import { portClick } from './drawTool';
+import { portClick, startPickUp, swallow } from './drawTool';
 import { armExplosive } from '../sim/engine';
 import { world, type WNode } from '../sim/world';
 import { useStore, useTick, CARD_W, type DepNode as DepNodeT } from '../store';
@@ -34,6 +34,9 @@ function PortHandle({ n, p }: { n: WNode; p: PortDef }) {
       className={`h k-${p.kind} ${live ? 'live' : ''}`}
       title={`${p.label}${p.kind === 'power' ? `: ${v} rW` : ''}`}
       onClick={(e) => { if (portClick(n.id, hid)) e.stopPropagation(); }}
+      onPointerDownCapture={(e) => { if (e.button === 0) startPickUp(n.id, hid, e); }}
+      onMouseDownCapture={(e) => { if (swallow.current) { e.stopPropagation(); e.preventDefault(); } }}
+      onTouchStartCapture={(e) => { if (swallow.current) e.stopPropagation(); }}
     />
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow, Background, BackgroundVariant, Controls, MiniMap, ViewportPortal, useReactFlow,
   ConnectionMode, type Connection, type ConnectionLineComponentProps, type IsValidConnection,
@@ -93,14 +93,14 @@ function PendingWire({ mouse }: { mouse: Pt | null }) {
   if (!start) return null;
   const pts = [start, ...pending.points];
   const last = pts[pts.length - 1];
-  if (mouse) pts.push(nextCorner(last, mouse, straight));
+  if (mouse) pts.push(pending.drag ? mouse : nextCorner(last, mouse, straight));
   const d = pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ');
   const w = cableWidth(pending.kind);
   return (
     <ViewportPortal>
       <svg style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 5 }}>
         <path d={d} fill="none" stroke="#14110e" strokeWidth={w + 2} strokeLinejoin="miter" />
-        <path d={d} fill="none" stroke={colorHex(color)} strokeWidth={w} strokeLinejoin="miter" />
+        <path d={d} fill="none" stroke={colorHex(pending.color ?? color)} strokeWidth={w} strokeLinejoin="miter" />
         {pending.points.map((q, i) => <circle key={i} cx={q.x} cy={q.y} r={4} fill="#ebe4d8" />)}
       </svg>
     </ViewportPortal>
@@ -193,8 +193,6 @@ export default function Board() {
   const onNodesChange = useStore((s) => s.onNodesChange);
   const onEdgesChange = useStore((s) => s.onEdgesChange);
   const onConnect = useStore((s) => s.onConnect);
-  const reconnect = useStore((s) => s.reconnect);
-  const removeEdge = useStore((s) => s.removeEdge);
   const addNode = useStore((s) => s.addNode);
   const addNote = useStore((s) => s.addNote);
   const checkpoint = useStore((s) => s.checkpoint);
@@ -205,7 +203,6 @@ export default function Board() {
   const { screenToFlowPosition, fitView } = useReactFlow();
   const fitReq = useStore((s) => s.fitReq);
   const [mouse, setMouse] = useState<Pt | null>(null);
-  const reconnected = useRef(false);
 
   useEffect(() => {
     if (!fitReq) return;
@@ -279,11 +276,7 @@ export default function Board() {
         connectionMode={ConnectionMode.Strict}
         connectionRadius={28}
         nodesConnectable={!drawMode}
-        edgesReconnectable={!drawMode}
-        reconnectRadius={16}
-        onReconnectStart={() => { reconnected.current = false; }}
-        onReconnect={(old, c) => { reconnected.current = true; reconnect(old, c); }}
-        onReconnectEnd={(_, edge) => { if (!reconnected.current) removeEdge(edge.id); }}
+        edgesReconnectable={false}
         onPaneClick={onPaneClick}
         onPaneContextMenu={(e) => { if (useStore.getState().pending) { e.preventDefault(); setPending(null); } }}
         deleteKeyCode={['Delete', 'Backspace']}
@@ -307,6 +300,7 @@ export default function Board() {
       </ReactFlow>
       <CostPanel />
       <BlastLayer />
+      {pending?.drag && <div className="draw-hint">Drop the cable on a port to plug it in, or on the board to unplug it.</div>}
       {drawMode && (
         <div className="draw-hint">
           {pending ? 'Click the board to place corners, click a port to finish. Esc or right-click cancels.' : `Wire tool: click a port to start a ${straight ? 'straight' : 'curved'} cable.`}
