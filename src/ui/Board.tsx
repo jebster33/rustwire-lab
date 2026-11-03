@@ -6,7 +6,7 @@ import {
 import { useStore, useTick, graphOf, type CableEdge as CableEdgeT, type Pt } from '../store';
 import DepNodeView, { PlayerNode } from './DepNode';
 import NoteNode from './NoteNode';
-import CableEdge from './CableEdge';
+import CableEdge, { CableLayers, curvePath, straightPath, type Dir } from './CableEdge';
 import { DEF, colorHex } from '../sim/defs';
 import { world } from '../sim/world';
 import { PX_PER_M, laserSegment } from '../sim/engine';
@@ -25,21 +25,15 @@ const portKind = (nodeId: string | null, handle: string | null | undefined) => {
   const n = world.current.nodes[nodeId];
   return n ? DEF[n.def].ports.find((p) => p.key === handle.slice(2))?.kind ?? null : null;
 };
-const cableWidth = (kind: string | null) => (kind === 'item' ? 11 : kind === 'fluid' ? 7 : 3);
 
-function ConnLine({ fromX, fromY, toX, toY, fromNode, fromHandle }: ConnectionLineComponentProps) {
-  const kind = portKind(fromNode?.id ?? null, fromHandle?.id);
+function ConnLine({ fromX, fromY, toX, toY, fromNode, fromHandle, fromPosition }: ConnectionLineComponentProps) {
+  const kind = portKind(fromNode?.id ?? null, fromHandle?.id) ?? 'power';
   const { wireColor, straight } = useStore.getState();
-  const w = cableWidth(kind);
-  const d = straight
-    ? `M${fromX},${fromY} L${(fromX + toX) / 2},${fromY} L${(fromX + toX) / 2},${toY} L${toX},${toY}`
-    : `M${fromX},${fromY} C${fromX + Math.max(40, Math.abs(toX - fromX) * 0.5)},${fromY} ${toX - Math.max(40, Math.abs(toX - fromX) * 0.5)},${toY} ${toX},${toY}`;
-  return (
-    <g>
-      <path d={d} fill="none" stroke="#14110e" strokeWidth={w + 2} />
-      <path d={d} fill="none" stroke={colorHex(wireColor)} strokeWidth={w} strokeDasharray={kind === 'power' ? undefined : '6 4'} />
-    </g>
-  );
+  const sd = (fromPosition ?? 'right') as Dir;
+  const td: Dir = sd === 'right' ? 'left' : sd === 'left' ? 'right' : sd === 'top' ? 'bottom' : 'top';
+  const pts = [{ x: fromX, y: fromY }, { x: toX, y: toY }];
+  const d = straight ? straightPath(pts, sd) : curvePath(pts, sd, td);
+  return <g><CableLayers d={d} kind={kind} hex={colorHex(wireColor)} /></g>;
 }
 
 /** Range rings and laser beams, drawn in flow space behind the parts. */
@@ -94,13 +88,18 @@ function PendingWire({ mouse }: { mouse: Pt | null }) {
   const pts = [start, ...pending.points];
   const last = pts[pts.length - 1];
   if (mouse) pts.push(pending.drag ? mouse : nextCorner(last, mouse, straight));
-  const d = pts.map((q, i) => `${i ? 'L' : 'M'}${q.x},${q.y}`).join(' ');
-  const w = cableWidth(pending.kind);
+  if (pts.length < 2) return null;
+  // leave the held port the way a real cable would, and arrive at the cursor from the opposite side
+  const n = world.current.nodes[pending.node];
+  const side = (n && DEF[n.def].ports.find((p) => p.key === pending.handle.slice(2))?.side) as Dir | undefined;
+  const sd: Dir = side ?? (pending.handle.startsWith('o:') ? 'right' : 'left');
+  const td: Dir = sd === 'right' ? 'left' : sd === 'left' ? 'right' : sd === 'top' ? 'bottom' : 'top';
+  const style = pending.style ?? (straight ? 'straight' : 'curve');
+  const d = style === 'straight' ? straightPath(pts, sd) : curvePath(pts, sd, td);
   return (
     <ViewportPortal>
       <svg style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 5 }}>
-        <path d={d} fill="none" stroke="#14110e" strokeWidth={w + 2} strokeLinejoin="miter" />
-        <path d={d} fill="none" stroke={colorHex(pending.color ?? color)} strokeWidth={w} strokeLinejoin="miter" />
+        <CableLayers d={d} kind={pending.kind} hex={colorHex(pending.color ?? color)} />
         {pending.points.map((q, i) => <circle key={i} cx={q.x} cy={q.y} r={4} fill="#ebe4d8" />)}
       </svg>
     </ViewportPortal>

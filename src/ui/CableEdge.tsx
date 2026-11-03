@@ -7,10 +7,10 @@ import { iconUrl } from '../data/items';
 
 type Pt = { x: number; y: number };
 
-type Dir = 'left' | 'right' | 'top' | 'bottom';
+export type Dir = 'left' | 'right' | 'top' | 'bottom';
 const VEC: Record<Dir, Pt> = { left: { x: -1, y: 0 }, right: { x: 1, y: 0 }, top: { x: 0, y: -1 }, bottom: { x: 0, y: 1 } };
 
-function curvePath(pts: Pt[], sd: Dir, td: Dir): string {
+export function curvePath(pts: Pt[], sd: Dir, td: Dir): string {
   const a = pts[0], b = pts[pts.length - 1];
   const sv = VEC[sd], tv = VEC[td];
   if (pts.length === 2) {
@@ -35,7 +35,7 @@ function curvePath(pts: Pt[], sd: Dir, td: Dir): string {
 }
 
 /** Straight segments with sharp corners; adds an elbow when there are no bends. */
-function straightPath(pts: Pt[], sd: Dir): string {
+export function straightPath(pts: Pt[], sd: Dir): string {
   let all = pts;
   if (pts.length === 2) {
     const [a, b] = pts;
@@ -182,3 +182,35 @@ function CableEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
 }
 
 export default memo(CableEdgeView);
+
+/** The textured cable look without live effects, used for the cable you're holding. */
+export function CableLayers({ d, kind, hex }: { d: string; kind: string; hex: string }) {
+  if (kind === 'fluid')
+    return (
+      <>
+        <path d={d} fill="none" stroke="rgba(0,0,0,.45)" strokeWidth={10} transform="translate(0,3)" />
+        <path d={d} fill="none" stroke="#0e1416" strokeWidth={9} strokeLinecap="round" />
+        <path d={d} fill="none" stroke={hex} strokeWidth={7} strokeLinecap="round" />
+        <path d={d} fill="none" stroke="rgba(0,0,0,.38)" strokeWidth={7} strokeDasharray="1.6 4.4" />
+        <path d={d} fill="none" stroke="rgba(255,255,255,.22)" strokeWidth={1.6} />
+      </>
+    );
+  if (kind === 'item')
+    return (
+      <>
+        <path d={d} fill="none" stroke="rgba(0,0,0,.5)" strokeWidth={15} transform="translate(0,3)" />
+        <path d={d} fill="none" stroke="#0e1416" strokeWidth={14} />
+        <path d={d} fill="none" stroke={hex} strokeWidth={11} />
+        <path d={d} fill="none" stroke="rgba(120,130,134,.42)" strokeWidth={11} />
+        <path d={d} fill="none" stroke="#11181b" strokeWidth={14} strokeDasharray="3.5 27" />
+        <path d={d} fill="none" stroke="rgba(255,255,255,.25)" strokeWidth={2.5} />
+      </>
+    );
+  return (
+    <>
+      <path d={d} fill="none" stroke="rgba(0,0,0,.45)" strokeWidth={5} transform="translate(0,2)" />
+      <path d={d} fill="none" stroke={hex} strokeWidth={3.2} strokeLinecap="round" />
+      <path d={d} fill="none" stroke={lighten(hex, 70)} strokeOpacity={0.45} strokeWidth={1} />
+    </>
+  );
+}
