@@ -31,7 +31,7 @@ function PortHandle({ n, p }: { n: WNode; p: PortDef }) {
       id={hid}
       type={p.dir === 'in' ? 'target' : 'source'}
       position={POS[p.side ?? 'left']}
-      className={`h k-${p.kind} ${live ? 'live' : ''}`}
+      className={`h k-${p.kind} p-${p.dir}-${p.kind} ${live ? 'live' : ''}`}
       title={`${p.label}${p.kind === 'power' ? `: ${v} rW` : ''}`}
       onClick={(e) => { if (portClick(n.id, hid)) e.stopPropagation(); }}
       onPointerDownCapture={(e) => { if (e.button === 0) startPickUp(n.id, hid, e); }}
@@ -44,7 +44,7 @@ function PortHandle({ n, p }: { n: WNode; p: PortDef }) {
 function PortRow({ n, p }: { n: WNode; p: PortDef }) {
   const v = portValue(n, p);
   return (
-    <div className={`port ${p.dir} k-${p.kind}`}>
+    <div className={`port ${p.dir} k-${p.kind} p-${p.dir}-${p.kind}`}>
       <PortHandle n={n} p={p} />
       {p.dir === 'out' && p.kind === 'power' && <span className="pv">{v > 0 ? v : ''}</span>}
       <span className="pl">{p.label}</span>
@@ -63,7 +63,7 @@ function EdgePorts({ n, ports, side }: { n: WNode; ports: PortDef[]; side: 'top'
       {ports.map((p, i) => {
         const v = portValue(n, p);
         return (
-          <div key={p.key} className={`eport k-${p.kind}`} style={{ left: start + spacing * i }}>
+          <div key={p.key} className={`eport k-${p.kind} p-${p.dir}-${p.kind}`} style={{ left: start + spacing * i }}>
             <PortHandle n={n} p={p} />
             <span className="pl">{p.label}{p.kind === 'power' && v > 0 ? <b className="pv"> {v}</b> : null}</span>
           </div>

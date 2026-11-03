@@ -14,6 +14,11 @@ export function curvePath(pts: Pt[], sd: Dir, td: Dir): string {
   const a = pts[0], b = pts[pts.length - 1];
   const sv = VEC[sd], tv = VEC[td];
   if (pts.length === 2) {
+    // ports lined up on the grid: run the cable dead straight, no sag
+    const horiz = (sd === 'left' || sd === 'right') && (td === 'left' || td === 'right');
+    const vert = (sd === 'top' || sd === 'bottom') && (td === 'top' || td === 'bottom');
+    const facing = horiz ? (b.x - a.x) * sv.x > 0 : vert ? (b.y - a.y) * sv.y > 0 : false;
+    if (facing && ((horiz && Math.abs(b.y - a.y) <= 4) || (vert && Math.abs(b.x - a.x) <= 4))) return `M${a.x},${a.y} L${b.x},${b.y}`;
     const dist = Math.hypot(b.x - a.x, b.y - a.y);
     const k = Math.max(40, dist * 0.45);
     const sag = Math.min(50, dist * 0.07);
@@ -39,7 +44,7 @@ export function straightPath(pts: Pt[], sd: Dir): string {
   let all = pts;
   if (pts.length === 2) {
     const [a, b] = pts;
-    if (a.x !== b.x && a.y !== b.y) {
+    if (Math.abs(a.x - b.x) > 4 && Math.abs(a.y - b.y) > 4) {
       all = sd === 'top' || sd === 'bottom'
         ? [a, { x: a.x, y: (a.y + b.y) / 2 }, { x: b.x, y: (a.y + b.y) / 2 }, b]
         : [a, { x: (a.x + b.x) / 2, y: a.y }, { x: (a.x + b.x) / 2, y: b.y }, b];
@@ -61,6 +66,7 @@ function lighten(hex: string, amt: number) {
 }
 
 function CableEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected }: EdgeProps<CableEdgeT>) {
+  const doomed = useStore((s) => s.doomed === id);
   useTick();
   const { screenToFlowPosition } = useReactFlow();
   const setEdge = useStore((s) => s.setEdge);
@@ -119,7 +125,7 @@ function CableEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
 
   const sel = selected ? 1 : 0;
   return (
-    <g>
+    <g className={doomed ? 'cable-doomed' : undefined}>
       {kind === 'power' && (
         <>
           <path d={d} fill="none" stroke="rgba(0,0,0,.45)" strokeWidth={5} transform="translate(0,2)" />
@@ -157,6 +163,7 @@ function CableEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
           )}
         </>
       )}
+      {doomed && <path d={d} fill="none" stroke="#e5583f" strokeWidth={kind === 'item' ? 16 : kind === 'fluid' ? 11 : 6} strokeLinecap="round" className="doomed-stroke" />}
       <path
         d={d}
         fill="none"

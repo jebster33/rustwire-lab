@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow, Background, BackgroundVariant, Controls, MiniMap, ViewportPortal, useReactFlow,
-  ConnectionMode, type Connection, type ConnectionLineComponentProps, type IsValidConnection,
+  ConnectionMode, useConnection, type Connection, type ConnectionLineComponentProps, type IsValidConnection,
 } from '@xyflow/react';
 import { useStore, useTick, graphOf, type CableEdge as CableEdgeT, type Pt } from '../store';
 import DepNodeView, { PlayerNode } from './DepNode';
@@ -186,6 +186,57 @@ function CostPanel() {
   );
 }
 
+/** While a cable is held: show only ports it can plug into, and flag the cable it would replace. */
+function HoldLayer() {
+  const conn = useConnection();
+  const pending = useStore((s) => s.pending);
+  const edges = useStore((s) => s.edges);
+  const setDoomed = useStore((s) => s.setDoomed);
+  const [hoverPort, setHoverPort] = useState<{ node: string; handle: string } | null>(null);
+  const held = pending
+    ? { node: pending.node, handle: pending.handle, kind: pending.kind }
+    : conn.inProgress && conn.fromHandle?.id
+      ? { node: conn.fromHandle.nodeId, handle: conn.fromHandle.id, kind: portKind(conn.fromHandle.nodeId, conn.fromHandle.id) }
+      : null;
+  const want = held?.kind ? `p-${held.handle.startsWith('o:') ? 'in' : 'out'}-${held.kind}` : null;
+
+  // track the port under the pointer while carrying a picked-up cable
+  useEffect(() => {
+    if (!pending) { setHoverPort(null); return; }
+    const move = (e: PointerEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest('.react-flow__handle') as HTMLElement | null;
+      const next = el?.dataset.nodeid && el.dataset.handleid ? { node: el.dataset.nodeid, handle: el.dataset.handleid } : null;
+      setHoverPort((cur) => (cur?.node === next?.node && cur?.handle === next?.handle ? cur : next));
+    };
+    addEventListener('pointermove', move);
+    return () => removeEventListener('pointermove', move);
+  }, [pending]);
+
+  const target = conn.inProgress && conn.toHandle?.id ? { node: conn.toHandle.nodeId, handle: conn.toHandle.id } : pending ? hoverPort : null;
+  const tNode = target?.node, tHandle = target?.handle;
+  useEffect(() => {
+    if (!held || !tNode || !tHandle) { setDoomed(null); return; }
+    const isIn = tHandle.startsWith('i:');
+    const ok = portKind(tNode, tHandle) === held.kind && isIn === held.handle.startsWith('o:') && tNode !== held.node;
+    const e = ok ? edges.find((x) => (isIn ? x.target === tNode && x.targetHandle === tHandle : x.source === tNode && x.sourceHandle === tHandle)) : undefined;
+    setDoomed(e?.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [held?.node, held?.handle, held?.kind, tNode, tHandle, edges, setDoomed]);
+
+  if (!want || !held) return null;
+  return (
+    <style>{`
+      .react-flow__node-dep .react-flow__handle:not(.${want}) { opacity: 0; pointer-events: none; }
+      .react-flow__node-dep .port:not(.${want}) > :not(.react-flow__handle),
+      .react-flow__node-dep .eport:not(.${want}) .pl { opacity: 0.18; }
+      .react-flow__node-dep:not(:has(.react-flow__handle.${want})) { opacity: 0.35; }
+      .react-flow__node-dep .react-flow__handle.${want} { box-shadow: 0 0 0 3px rgba(235, 228, 216, 0.35); }
+      .react-flow__node[data-id="${CSS.escape(held.node)}"] { opacity: 1 !important; }
+      .react-flow__node[data-id="${CSS.escape(held.node)}"] .react-flow__handle[data-handleid="${CSS.escape(held.handle)}"] { opacity: 1 !important; }
+    `}</style>
+  );
+}
+
 export default function Board() {
   const nodes = useStore((s) => s.nodes);
   const edges = useStore((s) => s.edges);
@@ -297,6 +348,7 @@ export default function Board() {
         <Controls showInteractive={false} position="bottom-left" />
         <MiniMap pannable zoomable nodeColor={minimapColor} maskColor="rgba(20,17,14,.6)" className="hide-sm" />
       </ReactFlow>
+      <HoldLayer />
       <CostPanel />
       <BlastLayer />
       {pending?.drag && <div className="draw-hint">Drop the cable on a port to plug it in, or on the board to unplug it.</div>}

@@ -40,6 +40,9 @@ interface State {
   straight: boolean;
   drawMode: boolean;
   pending: Pending;
+  /** cable that will be replaced if the held cable is dropped where it hovers */
+  doomed: string | null;
+  setDoomed: (id: string | null) => void;
   showCost: boolean;
   bg: Background;
   title: string;
@@ -184,6 +187,8 @@ export const useStore = create<State>((set, get) => {
     straight: !!prefs.straight,
     drawMode: false,
     pending: null,
+    doomed: null,
+    setDoomed: (doomed) => { if (get().doomed !== doomed) set({ doomed }); },
     showCost: prefs.showCost !== false,
     bg: null,
     title: '',
@@ -242,7 +247,7 @@ export const useStore = create<State>((set, get) => {
         type: 'cable',
         data: { kind, color: look.color ?? get().wireColor, points, style: look.style ?? (get().straight ? 'straight' : 'curve') },
       };
-      set({ edges: [...edges, edge] });
+      set({ edges: [...edges, edge], doomed: null });
       const tgt = world.current.nodes[c.target];
       const src = world.current.nodes[c.source];
       if (tgt?.def === 'rootcombiner' && src && !DEF[src.def].root) {
@@ -472,7 +477,8 @@ export const useStore = create<State>((set, get) => {
             return { id: n.id, type: 'note', position: { x: n.x, y: n.y }, data: { ...(n.note ?? { kind: n.def === 'note_box' ? 'box' : 'text', text: '', color: '#ebe4d8' }), def: n.def }, ...(n.w ? { width: n.w, height: n.h } : {}), ...(n.def === 'note_box' ? { zIndex: -1 } : {}) } as DepNode;
           }
           if (!world.current.nodes[n.id]) world.current.nodes[n.id] = makeNode(n.id, n.def);
-          return { id: n.id, type: nodeType(n.def), position: { x: n.x, y: n.y }, data: { def: n.def }, ...(n.parent ? { parentId: n.parent, draggable: false } : {}) };
+          const g = (v: number) => (n.parent ? v : snapTo(v));
+          return { id: n.id, type: nodeType(n.def), position: { x: g(n.x), y: g(n.y) }, data: { def: n.def }, ...(n.parent ? { parentId: n.parent, draggable: false } : {}) };
         }));
       const ids = new Set(nodes.map((n) => n.id));
       const live = nodes.filter((n) => !n.parentId || ids.has(n.parentId));
@@ -493,7 +499,7 @@ export const useStore = create<State>((set, get) => {
     setWireColor: (wireColor) => set({ wireColor }),
     setStraight: (straight) => { savePrefs({ straight }); set({ straight }); },
     setDrawMode: (drawMode) => set({ drawMode, pending: null }),
-    setPending: (pending) => set({ pending }),
+    setPending: (pending) => set(pending ? { pending } : { pending, doomed: null }),
     setShowCost: (showCost) => { savePrefs({ showCost }); set({ showCost }); },
     setBg: (bg) => set({ bg, dirty: true }),
     setTitle: (title) => set({ title, dirty: true }),
