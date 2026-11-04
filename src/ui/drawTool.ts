@@ -18,7 +18,8 @@ export function handlePos(nodeId: string, handle: string, toFlow: (p: Pt) => Pt)
 /** Handles a port click while the wire tool is on. Returns true when it used the click. */
 export function portClick(nodeId: string, handle: string): boolean {
   const s = useStore.getState();
-  if (!s.drawMode) return false;
+  // the wire tool, or straight-cable mode, lays cables by clicking
+  if (!s.drawMode && !s.straight && !s.pending) return false;
   const kind = kindOfHandle(nodeId, handle);
   if (!kind) return true;
   if (!s.pending) {
@@ -83,6 +84,16 @@ export function startPickUp(nodeId: string, handle: string, e: React.PointerEven
     st.bump();
   };
   addEventListener('pointerup', up, true);
+  return true;
+}
+
+/** Right-click while laying a cable: remove the last corner, or cancel if there are none. */
+export function undoCorner(): boolean {
+  const s = useStore.getState();
+  const p = s.pending;
+  if (!p) return false;
+  if (p.points.length && !p.drag) s.setPending({ ...p, points: p.points.slice(0, -1) });
+  else s.setPending(null);
   return true;
 }
 

@@ -42,6 +42,28 @@ export function curvePath(pts: Pt[], sd: Dir, td: Dir): string {
 /** Straight segments with sharp corners; adds an elbow when there are no bends. */
 export function straightPath(pts: Pt[], sd: Dir): string {
   let all = pts;
+  if (pts.length > 2) {
+    // keep the runs into and out of each port perfectly level: pull nearby corners onto the port's line
+    all = pts.map((q) => ({ ...q }));
+    const a = all[0], b = all[all.length - 1], first = all[1], last = all[all.length - 2];
+    const level = (c: Pt, port: Pt) => {
+      if (Math.abs(c.y - port.y) <= 16 && Math.abs(c.y - port.y) < Math.abs(c.x - port.x)) c.y = port.y;
+      else if (Math.abs(c.x - port.x) <= 16) c.x = port.x;
+    };
+    level(first, a);
+    level(last, b);
+    // every run horizontal or vertical: add an elbow wherever two points don't line up
+    const out: Pt[] = [all[0]];
+    for (let i = 1; i < all.length; i++) {
+      const p = out[out.length - 1], q = all[i];
+      if (Math.abs(p.x - q.x) > 1 && Math.abs(p.y - q.y) > 1) {
+        const lastRun = i === all.length - 1;
+        out.push(lastRun ? { x: p.x, y: q.y } : { x: q.x, y: p.y });
+      }
+      out.push(q);
+    }
+    all = out;
+  }
   if (pts.length === 2) {
     const [a, b] = pts;
     if (Math.abs(a.x - b.x) > 4 && Math.abs(a.y - b.y) > 4) {

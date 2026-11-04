@@ -51,7 +51,7 @@ interface State {
   past: Snap[];
   future: Snap[];
   panel: 'items' | 'inspect' | 'sim' | null; // mobile sheet
-  dialog: null | 'save' | 'saveas' | 'open' | 'online' | 'modules' | 'gallery' | 'calc' | 'help' | 'bg' | 'admin';
+  dialog: null | 'save' | 'saveas' | 'open' | 'online' | 'modules' | 'gallery' | 'calc' | 'help' | 'bg' | 'admin' | 'rustrician' | 'image';
   setPanel: (p: State['panel']) => void;
   setDialog: (d: State['dialog']) => void;
   bump: () => void;

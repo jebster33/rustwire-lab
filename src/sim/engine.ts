@@ -826,30 +826,44 @@ function processors(c: Ctx, dt: number) {
 
 // ───────── industrial
 type Found = { node: WNode; path: string[] };
-function findSources(c: Ctx, nodeId: string, port: string, path: string[], out: Found[], depth = 0) {
+/**
+ * Containers upstream of a conveyor. Storage adaptors daisy-chain like in Rust: a container whose
+ * Industrial In is piped from another container's Industrial Out is part of the same line.
+ */
+function findSources(c: Ctx, nodeId: string, port: string, path: string[], out: Found[], depth = 0, seen = new Set<string>()) {
   if (depth > 32 || out.length >= 32) return;
   const l = c.ins.get(k(nodeId, port));
   if (!l) return;
   const src = c.w.nodes[l.node];
-  if (!src) return;
+  if (!src || seen.has(src.id)) return;
+  seen.add(src.id);
   const p2 = [...path, l.edge];
   if (src.def === 'icombiner' || src.def === 'isplitter') {
-    for (const ip of src.def === 'icombiner' ? ['a', 'b', 'c'] : ['iin']) findSources(c, src.id, ip, p2, out, depth + 1);
+    for (const ip of src.def === 'icombiner' ? ['a', 'b', 'c'] : ['iin']) findSources(c, src.id, ip, p2, out, depth + 1, seen);
   } else if (src.def === 'conveyor') {
-    return; // conveyors don't store items
-  } else if (src.inv.length) out.push({ node: src, path: p2 });
+    return; // another conveyor's output: that line belongs to it
+  } else if (src.inv.length) {
+    out.push({ node: src, path: p2 });
+    // keep following the chain back through this container's adaptor
+    if (DEF[src.def].ports.some((p) => p.key === 'iin')) findSources(c, src.id, 'iin', p2, out, depth + 1, seen);
+  }
 }
-function findDests(c: Ctx, nodeId: string, port: string, path: string[], out: Found[], depth = 0) {
+/** Containers downstream of a conveyor, following daisy-chained storage adaptors in order. */
+function findDests(c: Ctx, nodeId: string, port: string, path: string[], out: Found[], depth = 0, seen = new Set<string>()) {
   if (depth > 32 || out.length >= 32) return;
   const l = c.outs.get(k(nodeId, port));
   if (!l) return;
   const dst = c.w.nodes[l.node];
-  if (!dst) return;
+  if (!dst || seen.has(dst.id)) return;
+  seen.add(dst.id);
   const p2 = [...path, l.edge];
-  if (dst.def === 'isplitter') for (const op of ['o1', 'o2', 'o3']) findDests(c, dst.id, op, p2, out, depth + 1);
-  else if (dst.def === 'icombiner') findDests(c, dst.id, 'iout', p2, out, depth + 1);
+  if (dst.def === 'isplitter') for (const op of ['o1', 'o2', 'o3']) findDests(c, dst.id, op, p2, out, depth + 1, seen);
+  else if (dst.def === 'icombiner') findDests(c, dst.id, 'iout', p2, out, depth + 1, seen);
   else if (dst.def === 'conveyor') return;
-  else if (dst.inv.length || dst.def === 'voidbox') out.push({ node: dst, path: p2 });
+  else if (dst.inv.length || dst.def === 'voidbox') {
+    out.push({ node: dst, path: p2 });
+    if (DEF[dst.def].ports.some((p) => p.key === 'iout')) findDests(c, dst.id, 'iout', p2, out, depth + 1, seen);
+  }
 }
 
 export type Filter = { s: string; min?: number; max?: number };
@@ -871,8 +885,12 @@ function industrial(c: Ctx, dt: number) {
     let budget = Number(n.params.rate) || 60;
     S.rr = (S.rr ?? 0) % dsts.length;
     let movedAny = false;
+    // rotate where we start in each source so different stacks (ore, wood…) take turns
+    S.slot = ((S.slot ?? 0) + 1) % 1000;
     outer: for (const src of srcs) {
-      for (let si = 0; si < src.node.inv.length; si++) {
+      const len = src.node.inv.length;
+      for (let step = 0; step < len; step++) {
+        const si = (step + S.slot) % len;
         const sl = src.node.inv[si];
         if (!sl || !pullable(src.node, sl.s, si)) continue;
         const f = filters.length ? filters.find((x) => x.s === sl.s) : undefined;
@@ -881,7 +899,8 @@ function industrial(c: Ctx, dt: number) {
         for (let tries = 0; tries < dsts.length && budget > 0; tries++) {
           const dst = dsts[(S.rr + tries) % dsts.length];
           if (dst.node.id === src.node.id) continue;
-          let qty = Math.min(sl.n, budget);
+          // no single stack may take the whole transfer, so mixed items (ore + wood) both flow
+          let qty = Math.min(sl.n, budget, Math.ceil((Number(n.params.rate) || 60) / 2));
           if (f?.min) qty = Math.min(qty, countItem(src.node.inv, sl.s) - f.min);
           if (f?.max) qty = Math.min(qty, f.max - countItem(dst.node.inv, sl.s));
           if (qty <= 0) continue;

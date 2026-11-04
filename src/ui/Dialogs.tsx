@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useReactFlow } from '@xyflow/react';
+import { world } from '../sim/world';
+import { importRustrician, exportRustrician } from '../lib/rustrician';
+import { exportPng, exportGif, download } from '../lib/exportImage';
 import { nanoid } from 'nanoid';
 import { useStore, type SaveDoc } from '../store';
 import { cloud, local, rememberKey, downloadJSON, type Meta, type User, type LocalSave, type Profile } from '../lib/cloud';
@@ -609,5 +613,114 @@ export function AccountMenu({ user, admin, onLogout, onProfile, onAdmin, onMine 
         </div>
       )}
     </div>
+  );
+}
+
+// ───────── Rustrician import / export
+export function RustricianDialog({ onClose, toast }: { onClose: () => void; toast: (t: string) => void }) {
+  const { load, insertDoc, serialize, title } = useStore();
+  const [tab, setTab] = useState<'import' | 'export'>('import');
+  const [text, setText] = useState('');
+  const [err, setErr] = useState('');
+  const exp = useMemo(() => (tab === 'export' ? exportRustrician(serialize(), world.current, title) : null), [tab, serialize, title]);
+  const run = (mode: 'replace' | 'insert') => {
+    setErr('');
+    try {
+      const r = importRustrician(text);
+      if (!r.imported) throw new Error('No parts in that circuit could be imported.');
+      if (mode === 'replace') { load(r.doc, {}, r.title); history.replaceState(null, '', '/'); }
+      else insertDoc(r.doc);
+      const sk = Object.entries(r.skipped);
+      toast(`Imported ${r.imported} parts and ${r.wires} wires${sk.length ? `. Skipped: ${sk.map(([k, v]) => `${v}× ${k}`).join(', ')}` : ''}${r.droppedWires ? `, ${r.droppedWires} wires couldn’t be matched` : ''}`);
+      onClose();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  const skipped = exp ? Object.entries(exp.skipped) : [];
+  return (
+    <Shell title="Rustrician" onClose={onClose} wide>
+      <div className="seg" style={{ marginBottom: 14 }}>
+        <button aria-pressed={tab === 'import'} onClick={() => setTab('import')}>Import from Rustrician</button>
+        <button aria-pressed={tab === 'export'} onClick={() => setTab('export')}>Export to Rustrician</button>
+      </div>
+      {tab === 'import' ? (
+        <>
+          <p className="help" style={{ marginTop: 0 }}>In Rustrician use Export (XML), then paste it here or load the file. Parts, wires, settings and text labels come across; layouts are spread out to fit our bigger cards.</p>
+          <div className="btnrow" style={{ margin: '8px 0' }}>
+            <label className="btn"><Ic.open />Load .xml file<input type="file" accept=".xml,text/xml,.txt" hidden onChange={(e) => e.target.files?.[0]?.text().then(setText)} /></label>
+          </div>
+          <textarea className="input cmd-box" rows={10} placeholder="<mxGraphModel>…" value={text} onChange={(e) => { setText(e.target.value); setErr(''); }} />
+          {err && <p className="help" style={{ color: 'var(--alarm)' }}>{err}</p>}
+          <div className="btnrow" style={{ marginTop: 10 }}>
+            <button className="btn primary" disabled={!text.trim()} onClick={() => run('replace')}>Open as new build</button>
+            <button className="btn" disabled={!text.trim()} onClick={() => run('insert')}><Ic.plus />Insert into this build</button>
+          </div>
+        </>
+      ) : exp && (
+        <>
+          <p className="help" style={{ marginTop: 0 }}>Copy this and use Import in Rustrician. {exp.exported} parts{skipped.length ? `; Rustrician has no ${skipped.map(([k]) => k).join(', ')}, so those are left out` : ''}.</p>
+          <textarea className="input cmd-box" rows={12} readOnly value={exp.xml} onFocus={(e) => e.target.select()} />
+          <div className="btnrow" style={{ marginTop: 10 }}>
+            <button className="btn primary" onClick={() => { navigator.clipboard?.writeText(exp.xml).then(() => toast('Rustrician XML copied'), () => toast('Copy blocked by the browser: use Download instead')); }}><Ic.copy />Copy XML</button>
+            <button className="btn" onClick={() => download(new Blob([exp.xml], { type: 'text/xml' }), `${(title || 'rustwire-build').replace(/[^\w-]+/g, '_')}.rustrician.xml`)}>Download .xml</button>
+          </div>
+        </>
+      )}
+    </Shell>
+  );
+}
+
+// ───────── PNG / GIF export
+export function ImageDialog({ onClose, toast }: { onClose: () => void; toast: (t: string) => void }) {
+  const rf = useReactFlow();
+  const title = useStore((s) => s.title);
+  const [scale, setScale] = useState(2);
+  const [grid, setGrid] = useState(true);
+  const [secs, setSecs] = useState(4);
+  const [busy, setBusy] = useState<string | null>(null);
+  const name = (title || 'rustwire-build').replace(/[^\w-]+/g, '_');
+  const bounds = () => {
+    const ns = rf.getNodes();
+    if (!ns.length) throw new Error('Add something to the board first.');
+    return rf.getNodesBounds(ns);
+  };
+  const png = async () => {
+    setBusy('Rendering…');
+    try { const r = await exportPng(bounds(), scale, grid, name); toast(`Saved ${r.w}×${r.h} PNG`); onClose(); }
+    catch (e) { toast((e as Error).message); }
+    finally { setBusy(null); }
+  };
+  const gif = async () => {
+    if (!useStore.getState().running) useStore.getState().setRunning(true);
+    setBusy('Recording 0%');
+    try {
+      const r = await exportGif(bounds(), { seconds: secs, fps: 8, maxSide: 1400, grid, name, onProgress: (f) => setBusy(`Recording ${Math.round(f * 100)}%`) });
+      toast(`Saved ${r.w}×${r.h} GIF, ${r.frames} frames`);
+      onClose();
+    } catch (e) { toast((e as Error).message); }
+    finally { setBusy(null); }
+  };
+  return (
+    <Shell title="Export image" onClose={onClose}>
+      <p className="help" style={{ marginTop: 0 }}>Exports the whole layout, not just what’s on screen.</p>
+      <label className="check"><input type="checkbox" checked={grid} onChange={(e) => setGrid(e.target.checked)} />Include the grid</label>
+      <h3 className="calc-h">PNG</h3>
+      <div className="field">
+        <label>Resolution</label>
+        <div className="seg">
+          {[1, 2, 3, 4].map((s) => <button key={s} aria-pressed={scale === s} onClick={() => setScale(s)}>{s}×</button>)}
+        </div>
+      </div>
+      <button className="btn primary" disabled={!!busy} onClick={png}>Export PNG</button>
+      <h3 className="calc-h">Animated GIF</h3>
+      <p className="help" style={{ marginTop: 0 }}>Records the running simulation, so you can show power and water flowing.</p>
+      <div className="field">
+        <label className="lv"><span>Length</span><b>{secs} s</b></label>
+        <input type="range" min={1} max={10} step={1} value={secs} onChange={(e) => setSecs(Number(e.target.value))} />
+      </div>
+      <button className="btn" disabled={!!busy} onClick={gif}>Record GIF</button>
+      {busy && <p className="help">{busy}</p>}
+    </Shell>
   );
 }

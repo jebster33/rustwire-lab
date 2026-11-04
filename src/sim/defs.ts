@@ -547,8 +547,8 @@ export const DEFS: Def[] = [
     ports: [...ADAPTOR], params: [ADAPTOR_PARAM],
   },
   {
-    id: 'voidbox', name: 'Void Box', icon: 'sim.voidbox', cat: 'sim', slots: 12, adaptor: true,
-    info: 'Deletes everything put into it and counts what it received.',
+    id: 'voidbox', name: 'Dumpster', icon: 'sim.voidbox', cat: 'sim', slots: 12, adaptor: true,
+    info: 'The opposite of the God Box: deletes every item piped or dropped into it, and counts what it took.',
     ports: [...ADAPTOR], params: [ADAPTOR_PARAM],
   },
 ];

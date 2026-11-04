@@ -7,7 +7,7 @@ import Board, { cursor } from './ui/Board';
 import Palette from './ui/Palette';
 import Inspector from './ui/Inspector';
 import SimPanel, { fmtTod } from './ui/SimPanel';
-import { SaveDialog, OpenDialog, GalleryDialog, CalcDialog, HelpDialog, BackgroundDialog, ProfileDialog, AdminDialog, AccountMenu } from './ui/Dialogs';
+import { SaveDialog, OpenDialog, GalleryDialog, CalcDialog, HelpDialog, BackgroundDialog, ProfileDialog, AdminDialog, AccountMenu, RustricianDialog, ImageDialog } from './ui/Dialogs';
 import { Ic } from './ui/icons';
 import { cloud, local, downloadJSON, type User } from './lib/cloud';
 
@@ -92,6 +92,8 @@ function FileMenu({ onQuickSave }: { onQuickSave: () => void }) {
           <button role="menuitem" onClick={go(onQuickSave)}><Ic.save />Save<span className="kbd">{mod}+S</span></button>
           <button role="menuitem" onClick={go(() => setDialog('saveas'))}><Ic.copy />Save as…</button>
           <button role="menuitem" onClick={go(() => downloadJSON(title || 'rustwire-build', serialize()))}>Export file</button>
+          <button role="menuitem" onClick={go(() => setDialog('image'))}>Export image (PNG / GIF)…</button>
+          <button role="menuitem" onClick={go(() => setDialog('rustrician'))}>Rustrician import / export…</button>
           <hr />
           <button role="menuitem" onClick={go(() => setDialog('bg'))}>Board background…</button>
           <button role="menuitem" onClick={go(() => setDialog('calc'))}><Ic.calc />Recipe calculator</button>
@@ -279,6 +281,8 @@ export default function App() {
       {dialog === 'calc' && <CalcDialog onClose={() => setDialog(null)} toast={toast} />}
       {dialog === 'help' && <HelpDialog onClose={() => setDialog(null)} />}
       {dialog === 'bg' && <BackgroundDialog onClose={() => setDialog(null)} />}
+      {dialog === 'rustrician' && <RustricianDialog onClose={() => setDialog(null)} toast={toast} />}
+      {dialog === 'image' && <ImageDialog onClose={() => setDialog(null)} toast={toast} />}
       {dialog === 'admin' && admin && <AdminDialog onClose={() => setDialog(null)} openCloud={openCloud} openProfile={openProfile} toast={toast} />}
       {profile && <ProfileDialog sid={profile} admin={admin} onClose={() => { setProfile(null); if (location.pathname.startsWith('/u/')) history.replaceState(null, '', '/'); }} openCloud={openCloud} toast={toast} />}
     </ReactFlowProvider>

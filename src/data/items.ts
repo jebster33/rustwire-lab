@@ -22,7 +22,7 @@ const ICON_OVERRIDE: Record<string, string> = {
   'sim.pile': 'box.wooden',
 };
 export const iconUrl = (s: string) =>
-  `https://wiki.rustclash.com/img/items180/${ICON_OVERRIDE[s] ?? s}.png`;
+  `/icons/${ICON_OVERRIDE[s] ?? s}.png`;
 
 // Vanilla stack sizes. The dataset has none, so these are by item type with overrides.
 const STACK: Record<string, number> = {

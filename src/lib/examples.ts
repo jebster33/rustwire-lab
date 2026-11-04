@@ -269,6 +269,27 @@ export const MODULES: { id: string; title: string; blurb: string; icons: string[
     ),
   },
   {
+    id: 'furnace-chain', title: 'Daisy-chained furnaces', blurb: 'One conveyor feeds three large furnaces chained through their storage adaptors; a second pulls the metal out the end.', icons: ['furnace.large', 'industrial.conveyor', 'metal.fragments'],
+    doc: () => build(
+      [
+        { id: 'gen', def: 'testgen', x: -288, y: 288 },
+        { id: 'god', def: 'godbox', x: 0, y: 0, st: { entries: [{ s: 'metal.ore', mode: 'infinite', n: 1000 }, { s: 'wood', mode: 'infinite', n: 1000 }] } },
+        { id: 'cv1', def: 'conveyor', x: 288, y: 96, st: { filters: [{ s: 'metal.ore', max: 2000 }, { s: 'wood', max: 1000 }] } },
+        { id: 'f1', def: 'furnace_l', x: 576, y: 0, params: { on: true }, items: [['wood', 200]] },
+        { id: 'f2', def: 'furnace_l', x: 864, y: 0, params: { on: true }, items: [['wood', 200]] },
+        { id: 'f3', def: 'furnace_l', x: 1152, y: 0, params: { on: true }, items: [['wood', 200]] },
+        { id: 'cv2', def: 'conveyor', x: 1440, y: 96, st: { filters: [{ s: 'metal.fragments' }, { s: 'charcoal' }] } },
+        { id: 'box', def: 'box_l', x: 1728, y: 0 },
+      ],
+      [
+        ['god', 'iout', 'cv1', 'iin', 'item', 'orange'], ['cv1', 'iout', 'f1', 'iin', 'item', 'orange'],
+        ['f1', 'iout', 'f2', 'iin', 'item', 'orange'], ['f2', 'iout', 'f3', 'iin', 'item', 'orange'],
+        ['f3', 'iout', 'cv2', 'iin', 'item', 'default'], ['cv2', 'iout', 'box', 'iin', 'item', 'default'],
+        ['gen', 'o1', 'cv1', 'in', 'power'], ['gen', 'o2', 'cv2', 'in', 'power'],
+      ],
+    ),
+  },
+  {
     id: 'workbench-crafters', title: 'Workbench 3 with two crafters', blurb: 'A level 3 workbench with both industrial crafter slots attached.', icons: ['workbench3', 'industrial.crafter'],
     doc: () => build([{ id: 'wb', def: 'wb3', x: 0, y: 0 }, { id: 'c1', def: 'crafter', x: 240, y: 0, parent: 'wb' }, { id: 'c2', def: 'crafter', x: -240, y: 0, parent: 'wb' }], []),
   },

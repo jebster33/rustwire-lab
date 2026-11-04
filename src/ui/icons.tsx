@@ -52,10 +52,22 @@ function RecyclerGlyph({ size }: { size: number }) {
   );
 }
 
+function DumpsterGlyph({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+      <path d="M6 16h36l-4 24H10z" fill="#3c5a3a" stroke="#1b2a1a" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M4 11l40-3 1 7-41 3z" fill="#4f7448" stroke="#1b2a1a" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M15 22v13M24 22v13M33 22v13" stroke="#24361f" strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx="13" cy="42" r="3" fill="#222" /><circle cx="35" cy="42" r="3" fill="#222" />
+    </svg>
+  );
+}
+
 /** Rust item icon, hotlinked, with a drawn fallback if it fails to load. */
 export function ItemIcon({ s, size = 40, className = '' }: { s: string; size?: number; className?: string }) {
   const [bad, setBad] = useState(false);
   if (s === 'recycler') return <RecyclerGlyph size={size} />;
+  if (s === 'sim.voidbox') return <DumpsterGlyph size={size} />;
   if (bad) {
     const label = itemName(s).split(/\s+/).map((w) => w[0]).join('').slice(0, 3);
     return (

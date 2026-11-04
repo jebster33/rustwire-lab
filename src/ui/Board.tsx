@@ -12,7 +12,7 @@ import { world } from '../sim/world';
 import { PX_PER_M, laserSegment } from '../sim/engine';
 import { ITEMS, itemName, rawCost } from '../data/items';
 import { Ic, ItemIcon } from './icons';
-import { handlePos, nextCorner } from './drawTool';
+import { handlePos, nextCorner, undoCorner } from './drawTool';
 
 const nodeTypes = { dep: DepNodeView, player: PlayerNode, note: NoteNode };
 const edgeTypes = { cable: CableEdge };
@@ -248,7 +248,6 @@ export default function Board() {
   const checkpoint = useStore((s) => s.checkpoint);
   const drawMode = useStore((s) => s.drawMode);
   const pending = useStore((s) => s.pending);
-  const setPending = useStore((s) => s.setPending);
   const straight = useStore((s) => s.straight);
   const { screenToFlowPosition, fitView } = useReactFlow();
   const fitReq = useStore((s) => s.fitReq);
@@ -256,7 +255,7 @@ export default function Board() {
 
   useEffect(() => {
     if (!fitReq) return;
-    const t = setTimeout(() => fitView({ maxZoom: 1.1, minZoom: matchMedia('(max-width: 820px)').matches ? 0.2 : 0.45, padding: 0.12, duration: 300 }), 80);
+    const t = setTimeout(() => fitView({ maxZoom: 1.1, minZoom: 0.12, padding: 0.12, duration: 300 }), 80);
     return () => clearTimeout(t);
   }, [fitReq, fitView]);
 
@@ -287,7 +286,7 @@ export default function Board() {
 
   const onPaneClick = useCallback((e: React.MouseEvent) => {
     const s = useStore.getState();
-    if (!s.drawMode || !s.pending) return;
+    if (!s.pending || s.pending.drag) return;
     const p = screenToFlowPosition({ x: e.clientX, y: e.clientY });
     const start = handlePos(s.pending.node, s.pending.handle, screenToFlowPosition);
     const last = s.pending.points[s.pending.points.length - 1] ?? start ?? p;
@@ -328,7 +327,8 @@ export default function Board() {
         nodesConnectable={!drawMode}
         edgesReconnectable={false}
         onPaneClick={onPaneClick}
-        onPaneContextMenu={(e) => { if (useStore.getState().pending) { e.preventDefault(); setPending(null); } }}
+        onPaneContextMenu={(e) => { if (undoCorner()) e.preventDefault(); }}
+        onNodeContextMenu={(e) => { if (undoCorner()) e.preventDefault(); }}
         deleteKeyCode={['Delete', 'Backspace']}
         multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
         snapToGrid
@@ -349,15 +349,40 @@ export default function Board() {
         <MiniMap pannable zoomable nodeColor={minimapColor} maskColor="rgba(20,17,14,.6)" className="hide-sm" />
       </ReactFlow>
       <HoldLayer />
+      <BoardTools />
       <CostPanel />
       <BlastLayer />
       {pending?.drag && <div className="draw-hint">Drop the cable on a port to plug it in, or on the board to unplug it.</div>}
-      {drawMode && (
+      {(drawMode || (pending && !pending.drag)) && (
         <div className="draw-hint">
-          {pending ? 'Click the board to place corners, click a port to finish. Esc or right-click cancels.' : `Wire tool: click a port to start a ${straight ? 'straight' : 'curved'} cable.`}
+          {pending
+            ? `Left-click to add a corner, click a port to finish. Right-click removes the last corner${pending.points.length ? '' : ' (or cancels)'}.`
+            : `Wire tool: click a port to start a ${straight ? 'straight' : 'curved'} cable.`}
         </div>
       )}
       {nodes.length === 0 && <EmptyHint />}
+    </div>
+  );
+}
+
+/** Quick tools above the zoom buttons: outline box and text label. */
+function BoardTools() {
+  const addNote = useStore((s) => s.addNote);
+  const { screenToFlowPosition } = useReactFlow();
+  const add = (kind: 'box' | 'text') => {
+    const r = document.querySelector('.board')?.getBoundingClientRect();
+    const c = screenToFlowPosition(r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : { x: innerWidth / 2, y: innerHeight / 2 });
+    addNote(kind, kind === 'box' ? { x: c.x - 240, y: c.y - 156 } : { x: c.x - 48, y: c.y - 16 });
+  };
+  const drag = (id: string) => (e: React.DragEvent) => { e.dataTransfer.setData('application/x-rustwire', id); e.dataTransfer.effectAllowed = 'copy'; };
+  return (
+    <div className="board-tools" role="toolbar" aria-label="Annotate">
+      <button title="Outline box: click to add, or drag onto the board" aria-label="Add outline box" draggable onDragStart={drag('note_box')} onClick={() => add('box')}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="3.5 2.5" /></svg>
+      </button>
+      <button title="Text label: click to add, or drag onto the board" aria-label="Add text label" draggable onDragStart={drag('note_text')} onClick={() => add('text')}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M12 6v13M9 19h6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg>
+      </button>
     </div>
   );
 }

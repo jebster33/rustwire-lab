@@ -5,6 +5,19 @@
 [functions]
   node_bundler = "esbuild"
 
+# Rust item icons, served same-origin (RustClash's CORS header is broken for image export)
+[[redirects]]
+  from = "/icons/*"
+  to = "https://wiki.rustclash.com/img/items180/:splat"
+  status = 200
+  force = true
+  headers = {X-From = "Netlify"}
+
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
