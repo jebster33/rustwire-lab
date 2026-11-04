@@ -44,6 +44,46 @@ const typeToPort = (t: string): { dir: 'in' | 'out'; kind: PortDef['kind'] } | n
 const SX = 3.6, SY = 3.0;
 const snap = (v: number) => Math.round(v / 24) * 24;
 
+/**
+ * Map one axis of Rustrician's layout onto ours. Positions that line up there (within a few px)
+ * become one column/row here; neighbouring columns sit one card apart, and bigger gaps between
+ * groups are kept but shrunk.
+ */
+function axisMap(values: number[], pitch: number, near = 40) {
+  const sorted = [...new Set(values.map((v) => Math.round(v)))].sort((a, b) => a - b);
+  const centres: number[] = [];
+  let group: number[] = [];
+  for (const v of sorted) {
+    if (group.length && v - group[group.length - 1] > near) { centres.push(group.reduce((a, b) => a + b, 0) / group.length); group = []; }
+    group.push(v);
+  }
+  if (group.length) centres.push(group.reduce((a, b) => a + b, 0) / group.length);
+  const placed: number[] = [];
+  let at = 0;
+  centres.forEach((c, i) => {
+    if (i) {
+      const gap = c - centres[i - 1];
+      // a normal neighbour spacing in Rustrician is ~70–130 px; wider gaps separate groups
+      at += pitch + Math.min(pitch * 2, Math.max(0, gap - 160) * 0.6);
+    }
+    placed.push(at);
+  });
+  return (v: number) => {
+    if (!centres.length) return 0;
+    if (v <= centres[0]) return placed[0] - (centres[0] - v) * (pitch / 90);
+    for (let i = 1; i < centres.length; i++) {
+      if (v <= centres[i]) {
+        const t = (v - centres[i - 1]) / (centres[i] - centres[i - 1]);
+        // snap to the nearer column when it's clearly part of it
+        if (t < 0.25) return placed[i - 1];
+        if (t > 0.75) return placed[i];
+        return placed[i - 1] + t * (placed[i] - placed[i - 1]);
+      }
+    }
+    return placed[placed.length - 1] + (v - centres[centres.length - 1]) * (pitch / 90);
+  };
+}
+
 export type ImportResult = { doc: SaveDoc; title: string; imported: number; skipped: Record<string, number>; wires: number; droppedWires: number };
 
 export function importRustrician(xml: string): ImportResult {
@@ -73,12 +113,13 @@ export function importRustrician(xml: string): ImportResult {
 
   const comps = cells.filter((c) => c.getAttribute('vertex') === '1' && c.getAttribute('parent') === '1' && (c.getAttribute('style') ?? '').startsWith('cmp_'));
   const texts = cells.filter((c) => c.getAttribute('vertex') === '1' && c.getAttribute('parent') === '1' && (c.getAttribute('style') ?? '').startsWith('text'));
-  const all = [...comps, ...texts].map(geo);
-  const minX = all.length ? Math.min(...all.map((g) => g.x)) : 0;
-  const minY = all.length ? Math.min(...all.map((g) => g.y)) : 0;
-  const pos = (x: number, y: number) => ({ x: snap((x - minX) * SX), y: snap((y - minY) * SY) });
+  const compGeo = comps.map(geo);
+  const mx = axisMap(compGeo.map((g) => g.x), 264);
+  const my = axisMap(compGeo.map((g) => g.y), 240);
+  const pos = (x: number, y: number) => ({ x: snap(mx(x)), y: snap(my(y)) });
 
   const nodes: SaveDoc['nodes'] = [];
+  const taken = new Set<string>();
   const skipped: Record<string, number> = {};
   /** rustrician port cell id → our node id + handle */
   const portMap = new Map<string, { node: string; handle: string }>();
@@ -124,7 +165,11 @@ export function importRustrician(xml: string): ImportResult {
     if (label && label !== DEF[defId].name) n.params._label = label;
     w.nodes[id] = n;
     const g = geo(c);
-    nodes.push({ id, def: defId, ...pos(g.x, g.y) });
+    // never stack two cards on the same spot
+    const at = pos(g.x, g.y);
+    while (taken.has(`${at.x},${at.y}`)) at.x += 264;
+    taken.add(`${at.x},${at.y}`);
+    nodes.push({ id, def: defId, ...at });
 
     // map this component's port cells onto our ports: by label first, then by direction and kind
     const ours = portsOf(DEF[defId], n.params);
@@ -158,7 +203,7 @@ export function importRustrician(xml: string): ImportResult {
 
   const edges: SaveDoc['edges'] = [];
   let dropped = 0;
-  const taken = new Set<string>();
+  const plugged = new Set<string>();
   for (const c of cells.filter((x) => x.getAttribute('edge') === '1')) {
     const s = portMap.get(c.getAttribute('source') ?? ''), t = portMap.get(c.getAttribute('target') ?? '');
     if (!s || !t) { dropped++; continue; }
@@ -166,10 +211,10 @@ export function importRustrician(xml: string): ImportResult {
     const [src, dst] = s.handle.startsWith('o:') ? [s, t] : [t, s];
     if (!src.handle.startsWith('o:') || !dst.handle.startsWith('i:')) { dropped++; continue; }
     const k1 = `${src.node}|${src.handle}`, k2 = `${dst.node}|${dst.handle}`;
-    if (taken.has(k1) || taken.has(k2)) { dropped++; continue; }
-    taken.add(k1); taken.add(k2);
+    if (plugged.has(k1) || plugged.has(k2)) { dropped++; continue; }
+    plugged.add(k1); plugged.add(k2);
     const kind = DEF[w.nodes[src.node].def].ports.find((p) => p.key === src.handle.slice(2))!.kind;
-    edges.push({ id: `w${c.getAttribute('id')}`, s: src.node, sh: src.handle, t: dst.node, th: dst.handle, kind, color: kind === 'power' ? 'default' : kind === 'fluid' ? 'lightblue' : 'default', points: [] });
+    edges.push({ id: `w${c.getAttribute('id')}`, s: src.node, sh: src.handle, t: dst.node, th: dst.handle, kind, color: kind === 'power' ? 'default' : kind === 'fluid' ? 'lightblue' : 'default', points: [], style: 'straight' });
   }
 
   return {
